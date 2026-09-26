@@ -41,12 +41,29 @@ class RawCache:
         tmp.write_bytes(data)
         tmp.replace(path)  # atomic, so an interrupted run never leaves a partial file
 
-    def fetch(self, key: str, fetch_fn: Callable[[], bytes]) -> bytes:
+    def fetch(
+        self,
+        key: str,
+        fetch_fn: Callable[[], bytes],
+        validate: Callable[[bytes], None] | None = None,
+    ) -> bytes:
+        """Returns cached bytes, or fetches and caches them.
+
+        `validate` raises on a bad payload (e.g. an error body sent with HTTP 200).
+        A bad fresh payload is never cached; a bad cached one is refetched.
+        """
         cached = self.get(key)
         if cached is not None:
-            self.hits += 1
-            return cached
+            try:
+                if validate:
+                    validate(cached)
+                self.hits += 1
+                return cached
+            except ValueError:
+                pass  # stale bad entry from before validation existed: refetch
         data = fetch_fn()
+        if validate:
+            validate(data)
         self.put(key, data)
         self.misses += 1
         return data

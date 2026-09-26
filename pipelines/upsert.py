@@ -1,11 +1,12 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from typing import Any
 
-from sqlalchemy import Boolean, ColumnElement, func, literal_column
+from sqlalchemy import Boolean, ColumnElement, delete, func, literal_column
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.base import Base
+from app.db.models import Document, Product
 
 
 def upsert(
@@ -33,3 +34,17 @@ def upsert(
     flags: Sequence[bool] = session.execute(upsert_stmt).scalars().all()
     inserted = sum(1 for flag in flags if flag)
     return inserted, len(flags) - inserted
+
+
+def prune(
+    session: Session, model: type[Product] | type[Document], source: str, keep: Collection[str]
+) -> int:
+    """Deletes rows of `source` whose source_id isn't in `keep`. Returns the count.
+
+    Refuses an empty `keep`, which would wipe the whole source.
+    """
+    if not keep:
+        raise ValueError(f"refusing to prune every {source} row: the new sample is empty")
+    stmt = delete(model).where(model.source == source, model.source_id.not_in(list(keep)))
+    result = session.execute(stmt)
+    return int(result.rowcount)  # type: ignore[attr-defined]

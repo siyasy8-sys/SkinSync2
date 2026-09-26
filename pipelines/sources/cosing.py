@@ -63,6 +63,13 @@ def parse_ingredient(metadata: dict[str, Any]) -> CosingIngredient | None:
     )
 
 
+def validate_search_response(payload: bytes) -> None:
+    """Raises ValueError unless the payload is a search result (not an error body)."""
+    data = json.loads(payload)
+    if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+        raise ValueError(f"unexpected CosIng response: {str(data)[:200]}")
+
+
 def parse_search_response(payload: bytes) -> list[CosingIngredient]:
     data = json.loads(payload)
     records = (parse_ingredient(r.get("metadata", {})) for r in data.get("results", []))
@@ -127,6 +134,7 @@ def fetch_cosing(
                     page_size=settings.cosing_page_size,
                     page_number=page,
                 ),
+                validate=validate_search_response,
             )
         )
     for seed in seeds:
@@ -143,6 +151,7 @@ def fetch_cosing(
                     page_size=5,
                     page_number=1,
                 ),
+                validate=validate_search_response,
             )
         )
 

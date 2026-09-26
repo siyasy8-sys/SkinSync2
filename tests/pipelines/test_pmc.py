@@ -1,4 +1,4 @@
-import json
+from collections.abc import Callable
 from datetime import date
 
 import httpx
@@ -60,36 +60,74 @@ def test_normalize_license(urls: list[str], expected: str | None) -> None:
     assert normalize_license(urls) == expected
 
 
-def test_fetch_identifies_to_ncbi_round_robins_and_caches(settings: Settings) -> None:
-    requests: list[httpx.Request] = []
-    esearch_ids = {"niacinamide": ["1000001", "1000002"], "retinol": ["1000003", "1000001"]}
-
+def _esearch_handler(
+    esearch_ids: dict[str, list[str]], requests: list[httpx.Request]
+) -> Callable[[httpx.Request], httpx.Response]:
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.path.endswith("esearch.fcgi"):
             seed = request.url.params["term"].split('"')[1]
             return httpx.Response(200, json={"esearchresult": {"idlist": esearch_ids[seed]}})
-        return httpx.Response(200, content=ARTICLES_XML)
+        pmc_id = request.url.params["id"]
+        # Serve a one-article set whose PMCID matches the requested ID.
+        xml = ARTICLES_XML.decode().replace("PMC1000001", f"PMC{pmc_id}")
+        return httpx.Response(200, content=xml.encode())
 
-    with make_client(settings, httpx.MockTransport(handler)) as client:
-        result = fetch_pmc(
-            client, RawCache(settings.data_dir, "pubmed"), settings, ("NIACINAMIDE", "RETINOL"), 2
-        )
-        fetch_pmc(
-            client, RawCache(settings.data_dir, "pubmed"), settings, ("NIACINAMIDE", "RETINOL"), 2
-        )
+    return handler
+
+
+def test_fetch_identifies_to_ncbi_applies_quota_and_caches(settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+    esearch_ids = {"niacinamide": ["11", "12", "13"], "retinol": ["13", "14"]}
+    seeds = ("NIACINAMIDE", "RETINOL")
+
+    with make_client(
+        settings, httpx.MockTransport(_esearch_handler(esearch_ids, requests))
+    ) as client:
+        result = fetch_pmc(client, RawCache(settings.data_dir, "pubmed"), settings, seeds, 2)
+        again = fetch_pmc(client, RawCache(settings.data_dir, "pubmed"), settings, seeds, 2)
 
     for request in requests:
         assert request.url.params["tool"] == "skinsync"
         assert request.url.params["email"] == "test@example.com"
         assert request.url.params["api_key"] == "k"
+    esearch = [r for r in requests if r.url.path.endswith("esearch.fcgi")]
+    assert {r.url.params["retmax"] for r in esearch} == {"2"}
     efetch_ids = [r.url.params["id"] for r in requests if r.url.path.endswith("efetch.fcgi")]
-    assert efetch_ids == ["1000001", "1000003"]  # round-robin: first hit of each seed
-    assert len(requests) == 4  # second run is served from cache
-    # Each fixture response holds all three articles; dedupe by PMCID.
-    assert {a.source_id for a in result.articles} == {"PMC1000001", "PMC1000003"}
-    assert result.rejected_license == 2
-    assert result.errors == []
+    # Quota 2 per seed: 11, 12 for niacinamide; 13, 14 for retinol. Each fetched once.
+    assert efetch_ids == ["11", "12", "13", "14"]
+    assert len(requests) == 6  # the second run is served from cache
+    assert result.per_seed == {"NIACINAMIDE": 2, "RETINOL": 2}
+    assert again.per_seed == result.per_seed
+
+
+def test_paper_found_by_two_seeds_is_fetched_once_and_counts_for_both(settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+    esearch_ids = {"niacinamide": ["21", "22"], "retinol": ["22"]}
+
+    with make_client(
+        settings, httpx.MockTransport(_esearch_handler(esearch_ids, requests))
+    ) as client:
+        result = fetch_pmc(
+            client, RawCache(settings.data_dir, "pubmed"), settings, ("NIACINAMIDE", "RETINOL"), 20
+        )
+
+    efetch_ids = [r.url.params["id"] for r in requests if r.url.path.endswith("efetch.fcgi")]
+    assert efetch_ids == ["21", "22"]
+    assert result.per_seed == {"NIACINAMIDE": 2, "RETINOL": 1}
+
+
+def test_changing_the_query_changes_the_cache_key(settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+    handler = _esearch_handler({"niacinamide": []}, requests)
+    narrower = settings.model_copy(update={"pmc_topic_terms": ("acne",)})
+
+    with make_client(settings, httpx.MockTransport(handler)) as client:
+        for s in (settings, settings, narrower):
+            fetch_pmc(client, RawCache(s.data_dir, "pubmed"), s, ("NIACINAMIDE",), 20)
+
+    assert len(requests) == 2  # repeat query cached; changed query refetched
+    assert len(list(settings.data_dir.glob("pubmed/*/esearch-niacinamide-*.json"))) == 2
 
 
 def test_fetch_requires_ncbi_email(settings: Settings) -> None:
@@ -101,25 +139,38 @@ def test_fetch_requires_ncbi_email(settings: Settings) -> None:
         fetch_pmc(client, RawCache(no_email.data_dir, "pubmed"), no_email, ("X",), 1)
 
 
-def test_search_query_filters_open_access_cc_licenses() -> None:
-    query = search_query("NIACINAMIDE")
-    assert query.startswith('"niacinamide"[tiab] AND skin AND ')
+def test_search_query_requires_seed_skin_and_topic_terms_in_title_abstract(
+    settings: Settings,
+) -> None:
+    query = search_query("NIACINAMIDE", settings.pmc_skin_terms, settings.pmc_topic_terms)
+
+    assert query.startswith('"niacinamide"[tiab] AND (skin[tiab] OR cutaneous[tiab]')
+    assert "(dermatolog*[tiab] OR cosmetic*[tiab]" in query
+    assert '"skin care"[tiab]' in query
+    assert " skin AND " not in query  # no unrestricted "skin" anywhere in the text
     assert '"cc by license"[filter]' in query and '"cc0 license"[filter]' in query
-    json.dumps(query)  # plain string, safe to log
 
 
-def test_failed_article_fetch_is_recorded_not_fatal(settings: Settings) -> None:
+def test_error_bodies_with_http_200_are_fetch_errors_not_results(settings: Settings) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("esearch.fcgi"):
-            return httpx.Response(200, json={"esearchresult": {"idlist": ["1", "2"]}})
-        if request.url.params["id"] == "1":
-            return httpx.Response(400)
-        return httpx.Response(200, content=ARTICLES_XML)
+            if "zinc" in request.url.params["term"]:
+                return httpx.Response(200, json={"esearchresult": {"ERROR": "Backend failed"}})
+            return httpx.Response(200, json={"esearchresult": {"idlist": ["31"]}})
+        return httpx.Response(200, content=b"<eFetchResult><ERROR>busy</ERROR></eFetchResult>")
 
-    fast = settings.model_copy(update={"http_max_retries": 0})
-    with make_client(fast, httpx.MockTransport(handler)) as client:
-        result = fetch_pmc(client, RawCache(fast.data_dir, "pubmed"), fast, ("X",), 2)
+    with make_client(settings, httpx.MockTransport(handler)) as client:
+        result = fetch_pmc(
+            client,
+            RawCache(settings.data_dir, "pubmed"),
+            settings.model_copy(update={"http_max_retries": 0}),
+            ("ZINC OXIDE", "RETINOL"),
+            20,
+        )
 
-    assert len(result.errors) == 1 and result.errors[0].startswith("PMC1: HTTPStatusError")
-    assert {a.source_id for a in result.articles} == {"PMC1000001", "PMC1000003"}
-    assert not list((fast.data_dir / "pubmed").glob("*/PMC1.xml"))  # failures aren't cached
+    assert result.per_seed == {"ZINC OXIDE": 0, "RETINOL": 0}
+    assert len(result.errors) == 2
+    assert result.errors[0].startswith("esearch ZINC OXIDE: EutilsError: esearch error")
+    assert result.errors[1].startswith("PMC31: EutilsError: efetch returned no article: busy")
+    cached = {p.name for p in settings.data_dir.glob("pubmed/*/*")}
+    assert not any(n.startswith("esearch-zinc") or n == "PMC31.xml" for n in cached)

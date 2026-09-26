@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import pytest
 
 from app.config import Settings
 from pipelines.cache import RawCache
@@ -58,3 +59,13 @@ def test_fetch_sends_api_key_and_filter_and_uses_cache(settings: Settings) -> No
     # Both responses contain the same records; dedupe on substance ID.
     assert [r.cosing_id for r in records] == ["35499", "79036", "83218"]
     assert again == records
+
+
+def test_error_body_is_rejected_and_not_cached(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": "Service unavailable"})
+
+    with make_client(settings, httpx.MockTransport(handler)) as client, pytest.raises(ValueError):
+        fetch_cosing(client, RawCache(settings.data_dir, "cosing"), settings, ())
+
+    assert not list(settings.data_dir.glob("cosing/*/*.json"))
