@@ -5,13 +5,13 @@ later milestone can fill documents.full_text without calling NCBI again.
 See pipelines/SOURCES.md.
 """
 
+import hashlib
 import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date
 from functools import partial
-from itertools import zip_longest
 
 import httpx
 from pydantic import BaseModel
@@ -43,6 +43,7 @@ class PmcFetchResult:
     articles: list["PmcArticle"] = field(default_factory=list)
     rejected_license: int = 0
     errors: list[str] = field(default_factory=list)
+    per_seed: dict[str, int] = field(default_factory=dict)
 
 
 class PmcArticle(BaseModel):
@@ -178,8 +179,16 @@ def _get(
     )
 
 
-def search_query(seed: str) -> str:
-    return f'"{seed.lower()}"[tiab] AND skin AND {LICENSE_FILTER}'
+def _any_tiab(terms: tuple[str, ...]) -> str:
+    return "(" + " OR ".join(f"{t}[tiab]" for t in terms) + ")"
+
+
+def search_query(seed: str, skin_terms: tuple[str, ...], topic_terms: tuple[str, ...]) -> str:
+    """Seed, a skin term and a dermatology/cosmetic term, all in title/abstract."""
+    return (
+        f'"{seed.lower()}"[tiab] AND {_any_tiab(skin_terms)} AND {_any_tiab(topic_terms)} '
+        f"AND {LICENSE_FILTER}"
+    )
 
 
 def _slug(name: str) -> str:
@@ -191,10 +200,11 @@ def fetch_pmc(
     cache: RawCache,
     settings: Settings,
     seeds: tuple[str, ...],
-    limit: int,
+    per_seed: int,
 ) -> PmcFetchResult:
-    """IDs are picked round-robin across seeds so every seed is represented.
+    """Up to `per_seed` papers for each seed (top hits by relevance).
 
+    A paper found by several seeds is fetched once but counts for each of them.
     A failed article fetch is recorded and skipped rather than aborting the run;
     successful fetches are cached, so a rerun only retries the failures.
     """
@@ -203,30 +213,28 @@ def fetch_pmc(
     esearch = f"{settings.ncbi_eutils_url}/esearch.fcgi"
     efetch = f"{settings.ncbi_eutils_url}/efetch.fcgi"
 
-    per_seed: list[list[str]] = []
+    seed_ids: dict[str, list[str]] = {}
     for seed in seeds:
         params: dict[str, str | int] = {
             **base,
             "db": "pmc",
-            "term": search_query(seed),
-            "retmax": settings.pmc_hits_per_seed,
+            "term": search_query(seed, settings.pmc_skin_terms, settings.pmc_topic_terms),
+            "retmax": per_seed,
             "retmode": "json",
             "sort": "relevance",
         }
+        # The key hashes the query, so changing the query never reuses stale results.
+        digest = hashlib.sha1(f"{params['term']}|{per_seed}".encode()).hexdigest()[:8]
         payload = cache.fetch(
-            f"esearch-{_slug(seed)}.json", partial(_get, client, limiter, settings, esearch, params)
+            f"esearch-{_slug(seed)}-{digest}.json",
+            partial(_get, client, limiter, settings, esearch, params),
         )
-        per_seed.append(json.loads(payload)["esearchresult"].get("idlist", []))
-
-    ids: list[str] = []
-    for round_ in zip_longest(*per_seed):
-        for pmc_id in round_:
-            if pmc_id and pmc_id not in ids and len(ids) < limit:
-                ids.append(pmc_id)
+        seed_ids[seed] = json.loads(payload)["esearchresult"].get("idlist", [])[:per_seed]
 
     articles: dict[str, PmcArticle] = {}
+    accepted_ids: set[str] = set()
     result = PmcFetchResult()
-    for pmc_id in ids:
+    for pmc_id in dict.fromkeys(i for ids in seed_ids.values() for i in ids):
         params = {**base, "db": "pmc", "id": pmc_id, "retmode": "xml"}
         try:
             payload = cache.fetch(
@@ -240,7 +248,12 @@ def fetch_pmc(
                 result.rejected_license += 1
             else:
                 articles.setdefault(article.source_id, article)
+                if article.source_id == f"PMC{pmc_id}":
+                    accepted_ids.add(pmc_id)
     result.articles = list(articles.values())
+    result.per_seed = {
+        seed: sum(1 for i in ids if i in accepted_ids) for seed, ids in seed_ids.items()
+    }
     return result
 
 

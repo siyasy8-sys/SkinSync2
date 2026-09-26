@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
 
     # Ingestion: shared
+    seed_coverage_min: int = 10  # seeds below this are reported as LOW
     data_dir: Path = Path("data/raw")
     user_agent: str = "SkinSync/0.1 (+https://github.com/siyasy8-sys/SkinSync2)"
     http_timeout_seconds: float = 60.0
@@ -37,8 +38,22 @@ class Settings(BaseSettings):
     ncbi_email: str | None = None
     ncbi_api_key: str | None = None
     ncbi_tool: str = "skinsync"
-    pmc_sample_limit: int = 50
-    pmc_hits_per_seed: int = 10
+    pmc_papers_per_seed: int = 20
+    # A paper qualifies only if its title/abstract mentions the seed, a skin term,
+    # and a dermatology/cosmetic term. "skin" anywhere in the text was too loose.
+    pmc_skin_terms: tuple[str, ...] = ("skin", "cutaneous", "dermal", "epidermal", "facial")
+    pmc_topic_terms: tuple[str, ...] = (
+        "dermatolog*",
+        "cosmetic*",
+        "cosmeceutical*",
+        "topical*",
+        "skincare",
+        '"skin care"',
+        "acne",
+        "photoaging",
+        "hyperpigmentation",
+        "sunscreen*",
+    )
 
     @property
     def ncbi_requests_per_second(self) -> float:
