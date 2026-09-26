@@ -60,11 +60,13 @@ def run_pmc(
 ) -> None:
     cache = RawCache(settings.data_dir, "pubmed", refresh=refresh)
     with make_client(settings) as client:
-        records, rejected = pmc.fetch_pmc(
+        result = pmc.fetch_pmc(
             client, cache, settings, SEED_ACTIVES, limit or settings.pmc_sample_limit
         )
-    stats.counts["rejected_license"] = rejected
-    _record(stats, cache, len(records), *pmc.load_documents(session, records))
+    stats.counts["rejected_license"] = result.rejected_license
+    stats.counts["fetch_errors"] = len(result.errors)
+    stats.errors.extend(result.errors)
+    _record(stats, cache, len(result.articles), *pmc.load_documents(session, result.articles))
 
 
 # dag names match the Airflow DAGs in SPEC.md, so Week 5 can reuse them.

@@ -7,7 +7,7 @@ Raw responses are cached under `data/raw/<source>/<snapshot-date>/` (git-ignored
 | --- | --- | --- | --- | --- |
 | EU CosIng | CC BY 4.0 (Commission reuse policy) | Ingredient metadata | CosIng site's search API, about 1 req/s | 2026-09-26 |
 | Open Beauty Facts | ODbL 1.0 (database), DbCL 1.0 (contents) | Product metadata + ingredient text | Daily JSONL dump (streamed sample) | 2026-09-26 |
-| PubMed Central OA subset | Per article; we keep CC BY and CC0 only | Metadata + abstract (full text later) | NCBI E-utilities | pending first ingest |
+| PubMed Central OA subset | Per article; we keep CC BY and CC0 only | Metadata + abstract (full text later) | NCBI E-utilities | 2026-09-26 |
 
 Not yet recorded, so not yet allowed: PubChem and the FDA OTC monographs.
 
@@ -52,7 +52,7 @@ Not yet recorded, so not yet allowed: PubChem and the FDA OTC monographs.
 - **Attribution:** every stored document keeps its title, URL (`https://pmc.ncbi.nlm.nih.gov/articles/PMC…/`) and license string. Answers that cite a document show its title and link.
 - **Access method:** [NCBI E-utilities](https://www.ncbi.nlm.nih.gov/books/NBK25497/), one of PMC's four approved retrieval services. Bulk retrieval by any other automated process is prohibited.
   - Requests send the `tool=skinsync` parameter, plus the `email` parameter taken from the `NCBI_EMAIL` env var.
-  - They're rate-limited to 3 req/s, or 10 req/s with an `NCBI_API_KEY`.
+  - They're paced at 2.5 req/s (8 with an `NCBI_API_KEY`), just under NCBI's 3 and 10 req/s limits, and 429/5xx responses are retried with backoff.
 - **Stored:**
   - Week 1: metadata and abstract, with `documents.full_text` left NULL.
   - The full JATS XML is cached locally, so a later milestone can fill `full_text` for these same CC BY/CC0 articles without calling NCBI again.

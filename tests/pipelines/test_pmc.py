@@ -72,7 +72,7 @@ def test_fetch_identifies_to_ncbi_round_robins_and_caches(settings: Settings) ->
         return httpx.Response(200, content=ARTICLES_XML)
 
     with make_client(settings, httpx.MockTransport(handler)) as client:
-        articles, rejected = fetch_pmc(
+        result = fetch_pmc(
             client, RawCache(settings.data_dir, "pubmed"), settings, ("NIACINAMIDE", "RETINOL"), 2
         )
         fetch_pmc(
@@ -87,8 +87,9 @@ def test_fetch_identifies_to_ncbi_round_robins_and_caches(settings: Settings) ->
     assert efetch_ids == ["1000001", "1000003"]  # round-robin: first hit of each seed
     assert len(requests) == 4  # second run is served from cache
     # Each fixture response holds all three articles; dedupe by PMCID.
-    assert {a.source_id for a in articles} == {"PMC1000001", "PMC1000003"}
-    assert rejected == 2
+    assert {a.source_id for a in result.articles} == {"PMC1000001", "PMC1000003"}
+    assert result.rejected_license == 2
+    assert result.errors == []
 
 
 def test_fetch_requires_ncbi_email(settings: Settings) -> None:
@@ -105,3 +106,20 @@ def test_search_query_filters_open_access_cc_licenses() -> None:
     assert query.startswith('"niacinamide"[tiab] AND skin AND ')
     assert '"cc by license"[filter]' in query and '"cc0 license"[filter]' in query
     json.dumps(query)  # plain string, safe to log
+
+
+def test_failed_article_fetch_is_recorded_not_fatal(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("esearch.fcgi"):
+            return httpx.Response(200, json={"esearchresult": {"idlist": ["1", "2"]}})
+        if request.url.params["id"] == "1":
+            return httpx.Response(400)
+        return httpx.Response(200, content=ARTICLES_XML)
+
+    fast = settings.model_copy(update={"http_max_retries": 0})
+    with make_client(fast, httpx.MockTransport(handler)) as client:
+        result = fetch_pmc(client, RawCache(fast.data_dir, "pubmed"), fast, ("X",), 2)
+
+    assert len(result.errors) == 1 and result.errors[0].startswith("PMC1: HTTPStatusError")
+    assert {a.source_id for a in result.articles} == {"PMC1000001", "PMC1000003"}
+    assert not list((fast.data_dir / "pubmed").glob("*/PMC1.xml"))  # failures aren't cached

@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data/raw")
     user_agent: str = "SkinSync/0.1 (+https://github.com/siyasy8-sys/SkinSync2)"
     http_timeout_seconds: float = 60.0
+    http_max_retries: int = 4
+    http_backoff_seconds: float = 1.0
 
     # EU CosIng: the search API used by the CosIng web app. The URL and public key are
     # published in https://ec.europa.eu/growth/tools-databases/cosing/assets/env-json-config.json
@@ -40,8 +42,9 @@ class Settings(BaseSettings):
 
     @property
     def ncbi_requests_per_second(self) -> float:
-        # NCBI allows 3 req/s without an API key and 10 req/s with one.
-        return 10.0 if self.ncbi_api_key else 3.0
+        # NCBI allows 3 req/s without an API key and 10 req/s with one. Pacing exactly
+        # at the limit still triggers 429s from timing jitter, so stay a little under.
+        return 8.0 if self.ncbi_api_key else 2.5
 
 
 @lru_cache

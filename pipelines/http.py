@@ -35,3 +35,30 @@ def make_client(settings: Settings, transport: httpx.BaseTransport | None = None
         follow_redirects=True,
         transport=transport,
     )
+
+
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def send(
+    client: httpx.Client,
+    limiter: RateLimiter,
+    request: httpx.Request,
+    *,
+    max_retries: int,
+    backoff_seconds: float,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bytes:
+    """Sends a rate-limited request, retrying 429/5xx with exponential backoff.
+
+    A numeric Retry-After header takes precedence over the computed backoff.
+    """
+    for attempt in range(max_retries + 1):
+        limiter.wait()
+        response = client.send(request)
+        if response.status_code not in RETRYABLE_STATUS or attempt == max_retries:
+            response.raise_for_status()
+            return response.content
+        retry_after = response.headers.get("Retry-After", "")
+        sleep(float(retry_after) if retry_after.isdigit() else backoff_seconds * 2**attempt)
+    raise AssertionError("unreachable")

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db.models import Ingredient
 from pipelines.cache import RawCache
-from pipelines.http import RateLimiter
+from pipelines.http import RateLimiter, send
 from pipelines.upsert import upsert
 
 RESTRICTION_FIELDS = (
@@ -79,8 +79,8 @@ def _search(
     page_size: int,
     page_number: int,
 ) -> bytes:
-    limiter.wait()
-    response = client.post(
+    request = client.build_request(
+        "POST",
         settings.cosing_search_url,
         params={
             "apiKey": settings.cosing_api_key,
@@ -90,8 +90,13 @@ def _search(
         },
         files={"query": (None, json.dumps({"bool": {"must": must}}), "application/json")},
     )
-    response.raise_for_status()
-    return response.content
+    return send(
+        client,
+        limiter,
+        request,
+        max_retries=settings.http_max_retries,
+        backoff_seconds=settings.http_backoff_seconds,
+    )
 
 
 def _slug(name: str) -> str:

@@ -8,6 +8,7 @@ See pipelines/SOURCES.md.
 import json
 import re
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from datetime import date
 from functools import partial
 from itertools import zip_longest
@@ -19,7 +20,7 @@ from sqlalchemy.orm import Session
 from app.config import Settings
 from app.db.models import Document
 from pipelines.cache import RawCache
-from pipelines.http import RateLimiter
+from pipelines.http import RateLimiter, send
 from pipelines.upsert import upsert
 
 SOURCE = "pmc"
@@ -35,6 +36,13 @@ SKIPPED_ABSTRACT_TYPES = {"graphical", "teaser", "author-highlights", "short", "
 
 class MissingNcbiEmailError(RuntimeError):
     pass
+
+
+@dataclass
+class PmcFetchResult:
+    articles: list["PmcArticle"] = field(default_factory=list)
+    rejected_license: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 class PmcArticle(BaseModel):
@@ -155,12 +163,19 @@ def _eutils_params(settings: Settings) -> dict[str, str]:
 
 
 def _get(
-    client: httpx.Client, limiter: RateLimiter, url: str, params: dict[str, str | int]
+    client: httpx.Client,
+    limiter: RateLimiter,
+    settings: Settings,
+    url: str,
+    params: dict[str, str | int],
 ) -> bytes:
-    limiter.wait()
-    response = client.get(url, params=params)
-    response.raise_for_status()
-    return response.content
+    return send(
+        client,
+        limiter,
+        client.build_request("GET", url, params=params),
+        max_retries=settings.http_max_retries,
+        backoff_seconds=settings.http_backoff_seconds,
+    )
 
 
 def search_query(seed: str) -> str:
@@ -177,10 +192,11 @@ def fetch_pmc(
     settings: Settings,
     seeds: tuple[str, ...],
     limit: int,
-) -> tuple[list[PmcArticle], int]:
-    """Returns (accepted articles, number rejected by the license re-check).
+) -> PmcFetchResult:
+    """IDs are picked round-robin across seeds so every seed is represented.
 
-    IDs are picked round-robin across seeds so every seed is represented.
+    A failed article fetch is recorded and skipped rather than aborting the run;
+    successful fetches are cached, so a rerun only retries the failures.
     """
     base = _eutils_params(settings)
     limiter = RateLimiter(settings.ncbi_requests_per_second)
@@ -198,7 +214,7 @@ def fetch_pmc(
             "sort": "relevance",
         }
         payload = cache.fetch(
-            f"esearch-{_slug(seed)}.json", partial(_get, client, limiter, esearch, params)
+            f"esearch-{_slug(seed)}.json", partial(_get, client, limiter, settings, esearch, params)
         )
         per_seed.append(json.loads(payload)["esearchresult"].get("idlist", []))
 
@@ -209,16 +225,23 @@ def fetch_pmc(
                 ids.append(pmc_id)
 
     articles: dict[str, PmcArticle] = {}
-    rejected = 0
+    result = PmcFetchResult()
     for pmc_id in ids:
         params = {**base, "db": "pmc", "id": pmc_id, "retmode": "xml"}
-        payload = cache.fetch(f"PMC{pmc_id}.xml", partial(_get, client, limiter, efetch, params))
+        try:
+            payload = cache.fetch(
+                f"PMC{pmc_id}.xml", partial(_get, client, limiter, settings, efetch, params)
+            )
+        except httpx.HTTPError as exc:
+            result.errors.append(f"PMC{pmc_id}: {type(exc).__name__}: {exc}")
+            continue
         for article in parse_efetch(payload):
             if article is None:
-                rejected += 1
+                result.rejected_license += 1
             else:
                 articles.setdefault(article.source_id, article)
-    return list(articles.values()), rejected
+    result.articles = list(articles.values())
+    return result
 
 
 def load_documents(session: Session, records: list[PmcArticle]) -> tuple[int, int]:
