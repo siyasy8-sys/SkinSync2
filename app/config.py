@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     # Open Beauty Facts: official daily dump (API scraping is not allowed)
     obf_dump_url: str = "https://static.openbeautyfacts.org/data/openbeautyfacts-products.jsonl.gz"
     obf_sample_limit: int = 300
+    obf_min_per_seed: int = 10
+    obf_prefer_english: bool = True
     obf_category_pattern: str = r"skin|face|facial|moistur|serum|sun|cleanser|lotion|cream"
 
     # NCBI E-utilities (PMC open-access subset)

@@ -71,8 +71,15 @@ def run_obf(
 ) -> None:
     cache = RawCache(settings.data_dir, "obf", refresh=refresh)
     with make_client(settings) as client:
-        records = obf.fetch_obf(client, cache, settings, limit or settings.obf_sample_limit)
-    _record(stats, cache, len(records), *obf.load_products(session, records))
+        result = obf.fetch_obf(
+            client,
+            cache,
+            settings.model_copy(update={"obf_sample_limit": limit or settings.obf_sample_limit}),
+            SEED_ACTIVES,
+        )
+    stats.counts["english_names"] = result.english
+    _record_seeds(stats, result.per_seed, settings.seed_coverage_min, "products")
+    _record(stats, cache, len(result.products), *obf.load_products(session, result.products))
 
 
 def run_pmc(
