@@ -1,0 +1,19 @@
+{
+  "totalResults": 4,
+  "pageNumber": 1,
+  "pageSize": 100,
+  "results": [
+    {"metadata": {"itemType": ["ingredient"], "substanceId": ["35499"], "inciName": ["NIACINAMIDE"],
+                  "casNo": ["98-92-0"], "functionName": ["SMOOTHING"], "status": ["Active"],
+                  "annexNo": [], "cosmeticRestriction": []}},
+    {"metadata": {"itemType": ["ingredient"], "substanceId": ["79036"],
+                  "inciName": ["SODIUM ALUMINUM CHLOROHYDROXY LACTATE"],
+                  "casNo": ["97660-24-7 / 8038-93-5"],
+                  "functionName": ["ANTIPERSPIRANT", "ASTRINGENT", "DEODORANT"], "status": ["Active"]}},
+    {"metadata": {"itemType": ["ingredient"], "substanceId": ["83218"],
+                  "inciName": ["NIACINAMIDE/YEAST POLYPEPTIDE"], "casNo": ["-"],
+                  "functionName": ["SKIN CONDITIONING"], "status": ["Active"],
+                  "annexNo": ["III"], "maximumConcentration": ["2 %"], "wordingOfConditions": ["-"]}},
+    {"metadata": {"itemType": ["substance"], "substanceId": ["12345"], "inciName": ["NOT AN INGREDIENT"]}}
+  ]
+}

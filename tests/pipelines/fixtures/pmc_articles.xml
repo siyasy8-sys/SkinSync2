@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pmc-articleset>
+  <article xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:ali="http://www.niso.org/schemas/ali/1.0/" article-type="research-article">
+    <front>
+      <article-meta>
+        <article-id pub-id-type="pmcid">PMC1000001</article-id>
+        <article-id pub-id-type="pmid">30000001</article-id>
+        <article-id pub-id-type="doi">10.1000/example.1</article-id>
+        <title-group><article-title>Topical <italic>niacinamide</italic> and the skin barrier</article-title></title-group>
+        <pub-date pub-type="ppub"><year>2021</year></pub-date>
+        <pub-date pub-type="epub"><day>15</day><month>3</month><year>2021</year></pub-date>
+        <permissions>
+          <license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/">
+            <license-p>This article is distributed under CC BY 4.0.</license-p>
+          </license>
+        </permissions>
+        <abstract abstract-type="graphical"><p>Graphical abstract text.</p></abstract>
+        <abstract>
+          <sec><title>Background</title><p>Niacinamide is a form of vitamin B3.</p></sec>
+          <sec><title>Results</title><p>Barrier function   improved.</p></sec>
+        </abstract>
+      </article-meta>
+    </front>
+    <body><p>Full text that Week 1 does not store.</p></body>
+  </article>
+  <article xmlns:xlink="http://www.w3.org/1999/xlink">
+    <front>
+      <article-meta>
+        <article-id pub-id-type="pmc">1000002</article-id>
+        <title-group><article-title>A non-commercial article</article-title></title-group>
+        <pub-date pub-type="epub"><year>2020</year></pub-date>
+        <permissions>
+          <license xlink:href="https://creativecommons.org/licenses/by-nc/4.0/"><license-p>CC BY-NC</license-p></license>
+        </permissions>
+        <abstract><p>Should be rejected.</p></abstract>
+      </article-meta>
+    </front>
+  </article>
+  <article xmlns:ali="http://www.niso.org/schemas/ali/1.0/">
+    <front>
+      <article-meta>
+        <article-id pub-id-type="pmc">1000003</article-id>
+        <title-group><article-title>Public domain retinol review</article-title></title-group>
+        <pub-date date-type="pub" publication-format="electronic"><month>13</month><year>2019</year></pub-date>
+        <permissions>
+          <license><ali:license_ref>https://creativecommons.org/publicdomain/zero/1.0/</ali:license_ref></license>
+        </permissions>
+        <abstract><p>Retinol is a retinoid.</p></abstract>
+      </article-meta>
+    </front>
+  </article>
+</pmc-articleset>

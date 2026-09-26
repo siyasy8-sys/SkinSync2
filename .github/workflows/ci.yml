@@ -52,6 +52,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql+psycopg://skinsync:skinsync@localhost:5432/skinsync
+      REQUIRE_DB: "1"  # DB tests must run in CI, never silently skip
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7

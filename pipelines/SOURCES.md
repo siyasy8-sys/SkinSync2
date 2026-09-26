@@ -5,8 +5,8 @@ Raw responses are cached under `data/raw/<source>/<snapshot-date>/` (git-ignored
 
 | Source | License | Stored | Access | Snapshot |
 | --- | --- | --- | --- | --- |
-| EU CosIng | CC BY 4.0 (Commission reuse policy) | Ingredient metadata | CosIng site's search API, about 1 req/s | pending first ingest |
-| Open Beauty Facts | ODbL 1.0 (database), DbCL 1.0 (contents) | Product metadata + ingredient text | Daily JSONL dump (streamed sample) | pending first ingest |
+| EU CosIng | CC BY 4.0 (Commission reuse policy) | Ingredient metadata | CosIng site's search API, about 1 req/s | 2026-09-26 |
+| Open Beauty Facts | ODbL 1.0 (database), DbCL 1.0 (contents) | Product metadata + ingredient text | Daily JSONL dump (streamed sample) | 2026-09-26 |
 | PubMed Central OA subset | Per article; we keep CC BY and CC0 only | Metadata + abstract (full text later) | NCBI E-utilities | pending first ingest |
 
 Not yet recorded, so not yet allowed: PubChem and the FDA OTC monographs.

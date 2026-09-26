@@ -17,6 +17,15 @@ uv run uvicorn app.main:app --reload
 curl localhost:8000/health             # {"status":"ok"}
 ```
 
+## Sample data (Week 1)
+
+```bash
+uv run python -m pipelines.ingest all      # CosIng, Open Beauty Facts, PMC samples
+uv run python -m pipelines.ingest pmc --refresh   # ignore the local cache, new snapshot
+```
+
+The PMC loader needs `NCBI_EMAIL` in `.env`. Raw responses are cached under `data/raw/`; see [pipelines/SOURCES.md](pipelines/SOURCES.md) for licenses.
+
 ## Checks
 
 ```bash
