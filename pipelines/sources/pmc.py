@@ -151,6 +151,29 @@ def parse_efetch(payload: bytes) -> list[PmcArticle | None]:
     return [parse_article(a) for a in articles]
 
 
+class EutilsError(ValueError):
+    """NCBI sometimes reports failures in the body of an HTTP 200 response."""
+
+
+def validate_esearch(payload: bytes) -> None:
+    try:
+        result = json.loads(payload)["esearchresult"]
+    except (ValueError, KeyError) as exc:
+        raise EutilsError(f"malformed esearch response: {exc}") from exc
+    if "ERROR" in result:
+        raise EutilsError(f"esearch error: {result['ERROR']}")
+
+
+def validate_efetch(payload: bytes) -> None:
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise EutilsError(f"malformed efetch response: {exc}") from exc
+    if root.tag != "article" and root.find("article") is None:
+        error = root.findtext(".//ERROR") or root.tag
+        raise EutilsError(f"efetch returned no article: {error}")
+
+
 def _eutils_params(settings: Settings) -> dict[str, str]:
     if not settings.ncbi_email:
         raise MissingNcbiEmailError(
@@ -213,6 +236,7 @@ def fetch_pmc(
     esearch = f"{settings.ncbi_eutils_url}/esearch.fcgi"
     efetch = f"{settings.ncbi_eutils_url}/efetch.fcgi"
 
+    result = PmcFetchResult()
     seed_ids: dict[str, list[str]] = {}
     for seed in seeds:
         params: dict[str, str | int] = {
@@ -225,22 +249,29 @@ def fetch_pmc(
         }
         # The key hashes the query, so changing the query never reuses stale results.
         digest = hashlib.sha1(f"{params['term']}|{per_seed}".encode()).hexdigest()[:8]
-        payload = cache.fetch(
-            f"esearch-{_slug(seed)}-{digest}.json",
-            partial(_get, client, limiter, settings, esearch, params),
-        )
+        try:
+            payload = cache.fetch(
+                f"esearch-{_slug(seed)}-{digest}.json",
+                partial(_get, client, limiter, settings, esearch, params),
+                validate=validate_esearch,
+            )
+        except (httpx.HTTPError, EutilsError) as exc:
+            result.errors.append(f"esearch {seed}: {type(exc).__name__}: {exc}")
+            seed_ids[seed] = []
+            continue
         seed_ids[seed] = json.loads(payload)["esearchresult"].get("idlist", [])[:per_seed]
 
     articles: dict[str, PmcArticle] = {}
     accepted_ids: set[str] = set()
-    result = PmcFetchResult()
     for pmc_id in dict.fromkeys(i for ids in seed_ids.values() for i in ids):
         params = {**base, "db": "pmc", "id": pmc_id, "retmode": "xml"}
         try:
             payload = cache.fetch(
-                f"PMC{pmc_id}.xml", partial(_get, client, limiter, settings, efetch, params)
+                f"PMC{pmc_id}.xml",
+                partial(_get, client, limiter, settings, efetch, params),
+                validate=validate_efetch,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, EutilsError) as exc:
             result.errors.append(f"PMC{pmc_id}: {type(exc).__name__}: {exc}")
             continue
         for article in parse_efetch(payload):

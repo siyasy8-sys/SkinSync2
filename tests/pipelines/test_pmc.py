@@ -149,3 +149,28 @@ def test_search_query_requires_seed_skin_and_topic_terms_in_title_abstract(
     assert '"skin care"[tiab]' in query
     assert " skin AND " not in query  # no unrestricted "skin" anywhere in the text
     assert '"cc by license"[filter]' in query and '"cc0 license"[filter]' in query
+
+
+def test_error_bodies_with_http_200_are_fetch_errors_not_results(settings: Settings) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("esearch.fcgi"):
+            if "zinc" in request.url.params["term"]:
+                return httpx.Response(200, json={"esearchresult": {"ERROR": "Backend failed"}})
+            return httpx.Response(200, json={"esearchresult": {"idlist": ["31"]}})
+        return httpx.Response(200, content=b"<eFetchResult><ERROR>busy</ERROR></eFetchResult>")
+
+    with make_client(settings, httpx.MockTransport(handler)) as client:
+        result = fetch_pmc(
+            client,
+            RawCache(settings.data_dir, "pubmed"),
+            settings.model_copy(update={"http_max_retries": 0}),
+            ("ZINC OXIDE", "RETINOL"),
+            20,
+        )
+
+    assert result.per_seed == {"ZINC OXIDE": 0, "RETINOL": 0}
+    assert len(result.errors) == 2
+    assert result.errors[0].startswith("esearch ZINC OXIDE: EutilsError: esearch error")
+    assert result.errors[1].startswith("PMC31: EutilsError: efetch returned no article: busy")
+    cached = {p.name for p in settings.data_dir.glob("pubmed/*/*")}
+    assert not any(n.startswith("esearch-zinc") or n == "PMC31.xml" for n in cached)

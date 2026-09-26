@@ -1,6 +1,8 @@
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from pipelines.cache import RawCache
 
 
@@ -30,3 +32,26 @@ def test_reuses_latest_snapshot_unless_refresh(tmp_path: Path) -> None:
     refreshed = RawCache(tmp_path, "src", refresh=True, today=date(2026, 9, 30))
     assert refreshed.snapshot == "2026-09-30"
     assert refreshed.get("a.json") is None
+
+
+def _reject_bad(data: bytes) -> None:
+    if data == b"bad":
+        raise ValueError("bad payload")
+
+
+def test_invalid_fresh_payload_raises_and_is_not_cached(tmp_path: Path) -> None:
+    cache = RawCache(tmp_path, "src")
+
+    with pytest.raises(ValueError, match="bad payload"):
+        cache.fetch("a.json", lambda: b"bad", validate=_reject_bad)
+
+    assert cache.get("a.json") is None
+
+
+def test_invalid_cached_payload_is_refetched(tmp_path: Path) -> None:
+    cache = RawCache(tmp_path, "src")
+    cache.put("a.json", b"bad")  # e.g. cached before validation existed
+
+    assert cache.fetch("a.json", lambda: b"good", validate=_reject_bad) == b"good"
+    assert cache.get("a.json") == b"good"
+    assert (cache.hits, cache.misses) == (0, 1)
