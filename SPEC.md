@@ -120,11 +120,11 @@ All data lives in one Postgres database. Structured facts and vector chunks shar
 
 | Table | Key columns | Notes |
 | --- | --- | --- |
-| `ingredients` | id, inci\_name, functions\[\], restrictions, cas\_number | One row per canonical ingredient |
+| `ingredients` | id, cosing\_id, inci\_name, functions\[\], restrictions, cas\_number | One row per canonical ingredient; `cosing_id` (CosIng substance ID) is the upsert key |
 | `ingredient_aliases` | alias, ingredient\_id, source, confidence | Every known name, mapped to its canonical ingredient |
-| `products` | id, name, brand, category, raw\_ingredient\_text | Raw text is kept for debugging parses |
+| `products` | id, source, source\_id, name, brand, category, raw\_ingredient\_text | Raw text is kept for debugging parses; (source, source\_id) is the upsert key, e.g. the Open Beauty Facts barcode |
 | `product_ingredients` | product\_id, ingredient\_id, position, match\_confidence | Position approximates concentration order |
-| `documents` | id, source, title, url, published\_at, license | One row per paper or monograph |
+| `documents` | id, source, source\_id, pmid, title, url, published\_at, license, abstract, full\_text | One row per paper or monograph; (source, source\_id) is the upsert key, e.g. the PMCID. `abstract` and `full_text` are nullable, and `full_text` is filled only for CC BY or CC0 articles |
 | `chunks` | id, document\_id, text, embedding vector(384), tsv, ingredient\_ids\[\] | Vector plus full-text index; ingredient tags enable filtered search |
 | `interactions` | ingredient\_a, ingredient\_b, effect, evidence\_level, chunk\_ids\[\], reviewed | Only reviewed rows are used at query time |
 | `ingestion_runs` / `eval_runs` | dag, started\_at, counts, metrics JSON | Operational history |
