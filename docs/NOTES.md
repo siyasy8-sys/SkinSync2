@@ -57,14 +57,16 @@ Per seed active, after `pipelines.ingest pmc/obf --refresh --prune`. Papers are 
 | BENZOYL PEROXIDE | 20 | **2** ⚠ |
 | ZINC OXIDE | 20 | 10 |
 | TITANIUM DIOXIDE | 20 | 41 |
-| CERAMIDE NP | **4** ⚠ | 11 |
+| CERAMIDE NP | 20 † | 11 |
 | PANTHENOL | 12 | 43 |
 | TOCOPHEROL | 20 | 104 |
 | BAKUCHIOL | 11 | **7** ⚠ |
 
-Totals: 228 unique papers (218 CC BY 4.0, 6 CC BY 3.0, 4 CC BY 2.0) and 300 products (295 with English names).
+Totals: 241 unique papers (231 CC BY 4.0, 6 CC BY 3.0, 4 CC BY 2.0) and 300 products (295 with English names).
 
-⚠ **Under 10:** these are source limits, not sampling bugs. Only 4 CC BY/CC0 papers match ceramide NP under the tightened query. The whole OBF dump has only 7 skincare products with azelaic acid, 2 with benzoyl peroxide and 7 with bakuchiol, and the sample takes all of them. Benzoyl peroxide and azelaic acid are mostly sold as OTC or prescription drugs, which OBF doesn't cover well. Expect weak product-suitability answers for these.
+† Was 4 under the INCI name alone. Since the `ceramide-synonyms` branch, the PMC query also accepts `ceramide` / `ceramides` (`pmc_seed_synonyms` in `app/config.py`), which finds 108 hits instead of 4. **Caveat:** these papers cover ceramides as a class (barrier lipids, stratum corneum profiling, topical delivery), and none of the 20 titles names ceramide NP. Use them as evidence for ceramides in general. Week 2/3 must not treat them as specific to CERAMIDE NP. The same run pruned 3 of the original 4 ceramide NP papers, which fell outside the new top 20.
+
+⚠ **Under 10:** these are source limits, not sampling bugs. The whole OBF dump has only 7 skincare products with azelaic acid, 2 with benzoyl peroxide and 7 with bakuchiol, and the sample takes all of them. Benzoyl peroxide and azelaic acid are mostly sold as OTC or prescription drugs, which OBF doesn't cover well. Expect weak product-suitability answers for these.
 
 ## Pipeline incident: NCBI error bodies with HTTP 200 (2026-09-26)
 During the resample, NCBI answered one esearch (zinc oxide) with HTTP 200 and the body `{"esearchresult": {"ERROR": "Search Backend failed ... 502"}}`. The loader cached that response and read it as zero hits, and the `--prune` still ran. It deleted Week 1 zinc oxide papers that the rerun then re-inserted.
