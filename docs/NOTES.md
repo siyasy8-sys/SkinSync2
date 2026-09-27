@@ -2,6 +2,51 @@
 
 Findings about the source data that affect later milestones. Newest first within each section.
 
+## Week 2 findings: entity resolution (2026-09-26)
+
+### Resolution coverage (300 products, before gold labels exist)
+6,649 mentions (1,963 distinct), resolved 6,047 (**90.9%**): 5,871 exact and 176 fuzzy. The remaining 602 are queued in `resolution_queue`: 347 no_match, 178 below_threshold (score 80–92), 47 suspected_noise, 30 ambiguous. These are coverage numbers, not accuracy; precision/recall/F1 need the hand labels in `eval/data/er_mentions.csv`.
+
+Spot checks: 20 random fuzzy matches were all plausible typo fixes ("sodiunm carbomer", "Limoene", "Capylic/Capric Triglyceride"). The review band holds back near-misses that would be wrong: "citrus bergamota fruit oil" scores 80 against CITRUS BERGAMIA **LEAF** OIL and is queued, not accepted.
+
+### The full CosIng inventory has quirks
+- The API won't page past 10,000 hits, so the fetch splits the list by `substanceId` ranges (all 9 partitions are under 10k).
+- Paging by the default relevance order is **not stable** for `text=*`: pages overlapped (16 IDs twice, 16 never seen). Sorting by `substanceId` fixes it.
+- The index holds **16 exact duplicate documents** (same record and reference UUID): 33,656 hits represent 33,640 ingredients. Identical duplicates are deduped; conflicting ones would fail the run.
+- Data error: KINETIN's INN field says "hyaluronidase". The INCI tie-break (below) sends "hyaluronidase" to HYALURONIDASE, not KINETIN.
+
+### Name collisions between CosIng entries
+CosIng often has two entries for one substance: an INCI name, plus another entry whose US name is the same text.
+- "water": the WATER entry vs AQUA (US name "water")
+- "titanium dioxide" vs CI 77891; "zinc oxide" vs CI 77947
+- "mineral oil": two entries; "beeswax": BEESWAX vs CERA ALBA
+
+Two rules handle this, both deterministic:
+- **Corroboration:** when a label gives two names ("Titanium Dioxide (CI 77891)", "Water/Aqua"), the answer is the one ingredient both names point to.
+- **INCI tie-break:** a bare shared name goes to the entry it is the official INCI name of. `er_inci_tiebreak` can be switched off for ablation.
+
+Some pairs remain genuinely separate entries with no shared alias (CI 77007 vs ULTRAMARINES) and stay ambiguous.
+
+### Gap: common English names aren't in CosIng
+The biggest no_match groups are names CosIng doesn't carry: fragrance (18 mentions), purified water, perfume, vitamin e, shea butter, liquid paraffin, sunflower seed oil, deionized water. Closing this needs a common-name alias source. Options: PubChem synonyms (license to record first), or a small hand-curated alias list. **Decision pending.**
+
+### Label formats the parser now handles
+- `(and)` INCI blend notation, and `&` premixes (these share a position)
+- dash-separated lists without commas
+- commas inside chemical names (`1,2-Hexanediol`)
+- CRLF line endings and line wraps inside names (`Sodium \r\nHyaluronate`)
+- stacked may-contain markers (`[+/- MAY CONTAIN / PEUT CONTENIR`)
+- backslash separators and HTML entities
+
+Still unhandled, and left for the eval to measure:
+- homoglyphs (a Cyrillic А in `АQUA`)
+- OCR errors (`Stearoy!`)
+- missing commas (`Phenoxyethanol. Propylparaben`)
+- marketing prose pasted into the ingredient field (flagged as suspected noise)
+
+### Salt/ester links
+Rules generated 189 `salt_of` and 99 `ester_of` candidates, all `reviewed=false`, so nothing uses them yet. Examples: sodium hyaluronate → hyaluronic acid, tocopheryl acetate → tocopherol, retinyl palmitate → retinol, ascorbyl palmitate → ascorbic acid.
+
 ## Week 1 findings (2026-09-26)
 
 ### 1. Loose PMC matches: addressed in `week1-followups`
