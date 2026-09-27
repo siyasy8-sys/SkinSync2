@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     ncbi_api_key: str | None = None
     ncbi_tool: str = "skinsync"
     pmc_papers_per_seed: int = 20
+    # Extra title/abstract names per seed, used only in the PMC query. Keys are INCI
+    # seed names. Synonyms may be broader than the seed (e.g. ceramides as a class).
+    pmc_seed_synonyms: dict[str, tuple[str, ...]] = {
+        "CERAMIDE NP": ("ceramide np", "ceramide", "ceramides"),
+    }
     # A paper qualifies only if its title/abstract mentions the seed, a skin term,
     # and a dermatology/cosmetic term. "skin" anywhere in the text was too loose.
     pmc_skin_terms: tuple[str, ...] = ("skin", "cutaneous", "dermal", "epidermal", "facial")

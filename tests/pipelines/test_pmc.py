@@ -8,6 +8,7 @@ from app.config import Settings
 from pipelines.cache import RawCache
 from pipelines.http import make_client
 from pipelines.sources.pmc import (
+    LICENSE_FILTER,
     MissingNcbiEmailError,
     fetch_pmc,
     normalize_license,
@@ -174,3 +175,47 @@ def test_error_bodies_with_http_200_are_fetch_errors_not_results(settings: Setti
     assert result.errors[1].startswith("PMC31: EutilsError: efetch returned no article: busy")
     cached = {p.name for p in settings.data_dir.glob("pubmed/*/*")}
     assert not any(n.startswith("esearch-zinc") or n == "PMC31.xml" for n in cached)
+
+
+def test_synonyms_are_ored_in_title_abstract(settings: Settings) -> None:
+    query = search_query(
+        "CERAMIDE NP",
+        settings.pmc_skin_terms,
+        settings.pmc_topic_terms,
+        settings.pmc_seed_synonyms["CERAMIDE NP"],
+    )
+
+    assert query.startswith('("ceramide np"[tiab] OR "ceramide"[tiab] OR "ceramides"[tiab]) AND ')
+    assert '"cc by license"[filter]' in query
+
+
+def test_seeds_without_synonyms_keep_the_exact_previous_query(settings: Settings) -> None:
+    # Pinned so that adding synonyms for one seed can't change other seeds' cache keys.
+    expected = (
+        '"niacinamide"[tiab] AND (skin[tiab] OR cutaneous[tiab] OR dermal[tiab] '
+        "OR epidermal[tiab] OR facial[tiab]) AND (dermatolog*[tiab] OR cosmetic*[tiab] "
+        'OR cosmeceutical*[tiab] OR topical*[tiab] OR skincare[tiab] OR "skin care"[tiab] '
+        "OR acne[tiab] OR photoaging[tiab] OR hyperpigmentation[tiab] OR sunscreen*[tiab]) "
+        f"AND {LICENSE_FILTER}"
+    )
+    assert "NIACINAMIDE" not in settings.pmc_seed_synonyms
+    assert (
+        search_query("NIACINAMIDE", settings.pmc_skin_terms, settings.pmc_topic_terms) == expected
+    )
+
+
+def test_fetch_uses_configured_synonyms_for_that_seed_only(settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+
+    def search_only(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
+
+    with make_client(settings, httpx.MockTransport(search_only)) as client:
+        fetch_pmc(
+            client, RawCache(settings.data_dir, "pubmed"), settings, ("CERAMIDE NP", "RETINOL"), 20
+        )
+
+    terms = [r.url.params["term"] for r in requests]
+    assert terms[0].startswith('("ceramide np"[tiab] OR "ceramide"[tiab]')
+    assert terms[1].startswith('"retinol"[tiab] AND ')
