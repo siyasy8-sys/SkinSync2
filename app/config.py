@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     er_fuzzy_margin: float = 3.0  # ...and at least this far ahead of the next ingredient
     er_review_floor: float = 80.0  # [floor, threshold): queued as below_threshold
     er_candidate_k: int = 20  # trigram candidates fetched per query
+    er_inci_tiebreak: bool = True  # a name shared by entries -> the one it's the INCI name of
     er_queue_candidates: int = 5  # candidates stored with each queued mention
 
     # NCBI E-utilities (PMC open-access subset)

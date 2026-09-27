@@ -27,6 +27,7 @@ EXACT_CONFIDENCE: dict[VariantKind, float] = {
     "paren": 0.95,
     "slash_part": 0.95,
 }
+INCI_TIEBREAK_CONFIDENCE = 0.95
 
 
 @dataclass(frozen=True)
@@ -79,36 +80,71 @@ def _candidates(
     return tuple(out)
 
 
-def exact_stage(ctx: MentionContext) -> Outcome | None:
-    """First variant (most faithful first) whose alias names exactly one ingredient.
+def _inci_tiebreak(hits: dict[int, str]) -> int | None:
+    """The one ingredient whose official INCI name is this text, if exactly one is.
 
-    An alias shared by several ingredients, or slash parts naming different
-    ingredients, is ambiguous and stops the cascade.
+    "water" is the INCI name of WATER and the US name of AQUA; the INCI entry wins.
     """
-    slash_hits: dict[int, str] = {}
-    for variant in ctx.variants:
-        ids = ctx.index.lookup(variant.text)
-        if not ids:
-            continue
-        if variant.kind == "slash_part":
-            if len(ids) == 1:
-                slash_hits.setdefault(next(iter(ids)), variant.text)
-            continue
-        if len(ids) == 1:
-            (ingredient_id,) = ids
-            return Resolved(
-                ingredient_id, "exact", EXACT_CONFIDENCE[variant.kind], variant.kind, variant.text
-            )
-        scored = [(i, variant.text, 100.0) for i in sorted(ids)]
-        return Unresolved("ambiguous", _candidates(ctx, scored), final=True)
+    inci = [i for i, source in hits.items() if source == "inci"]
+    return inci[0] if len(inci) == 1 else None
 
-    if len(slash_hits) == 1:
-        ((ingredient_id, alias),) = slash_hits.items()
-        return Resolved(ingredient_id, "exact", EXACT_CONFIDENCE["slash_part"], "slash_part", alias)
-    if len(slash_hits) > 1:
-        scored = [(i, alias, 100.0) for i, alias in slash_hits.items()]
-        return Unresolved("ambiguous", _candidates(ctx, scored), final=True)
-    return None
+
+def exact_stage(ctx: MentionContext) -> Outcome | None:
+    """Exact alias lookup over the mention's variants.
+
+    1. The label text itself naming one ingredient wins outright.
+    2. Otherwise the variants corroborate each other: "Titanium Dioxide (CI 77891)" and
+       "Water/Aqua" give two names for one thing, so the answer is the single ingredient
+       that every variant with a hit points to.
+    3. A single name shared by several ingredients falls back to the one whose official
+       INCI name it is (if enabled); anything else is ambiguous and stops the cascade.
+    """
+    hits = [(v, h) for v in ctx.variants if (h := ctx.index.lookup(v.text))]
+    if not hits:
+        return None
+    first_variant, first_hits = hits[0]
+    if first_variant.kind == "full" and len(first_hits) == 1:
+        (ingredient_id,) = first_hits
+        return Resolved(ingredient_id, "exact", 1.0, "full", first_variant.text)
+
+    common = set(first_hits).intersection(*(h for _, h in hits[1:]))
+    if len(common) == 1:
+        (ingredient_id,) = common
+        return Resolved(
+            ingredient_id,
+            "exact",
+            EXACT_CONFIDENCE[first_variant.kind],
+            first_variant.kind,
+            first_variant.text,
+        )
+    if not common:
+        # Variants disagree. The most faithful non-slash variant naming one ingredient wins,
+        # as the old behaviour did; disagreeing slash parts stay ambiguous.
+        for variant, found in hits:
+            if variant.kind != "slash_part" and len(found) == 1:
+                (ingredient_id,) = found
+                return Resolved(
+                    ingredient_id,
+                    "exact",
+                    EXACT_CONFIDENCE[variant.kind],
+                    variant.kind,
+                    variant.text,
+                )
+        pool = {i: first_variant.text for _, found in hits for i in found}
+    else:
+        if ctx.settings.er_inci_tiebreak:
+            winner = _inci_tiebreak({i: first_hits[i] for i in common})
+            if winner is not None:
+                return Resolved(
+                    winner,
+                    "exact",
+                    min(EXACT_CONFIDENCE[first_variant.kind], INCI_TIEBREAK_CONFIDENCE),
+                    first_variant.kind,
+                    first_variant.text,
+                )
+        pool = {i: first_variant.text for i in common}
+    scored = [(i, alias, 100.0) for i, alias in sorted(pool.items())]
+    return Unresolved("ambiguous", _candidates(ctx, scored), final=True)
 
 
 @cache
@@ -159,6 +195,11 @@ class Resolver:
     settings: Settings
     stages: tuple[Stage, ...] = DEFAULT_STAGES
     _memo: dict[tuple[str, bool], Outcome] = field(default_factory=dict)
+
+    @property
+    def distinct_resolved(self) -> int:
+        """Distinct normalized mentions resolved so far (each runs the cascade once)."""
+        return len(self._memo)
 
     def resolve(self, mention: str, suspected_noise: bool = False) -> Outcome:
         normalized = normalize(mention)

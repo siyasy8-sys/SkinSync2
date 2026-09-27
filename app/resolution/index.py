@@ -22,9 +22,17 @@ class AliasHit:
     ingredient_id: int
 
 
+# Lower is more authoritative: an official INCI name beats a secondary name.
+SOURCE_RANK = {"inci": 0, "inci_usa": 1, "inn": 2, "ph_eur": 3, "glossary": 4, "cas": 5}
+
+
+def _rank(source: str) -> int:
+    return SOURCE_RANK.get(source, len(SOURCE_RANK))
+
+
 class AliasIndex(Protocol):
-    def lookup(self, alias: str) -> set[int]:
-        """Ingredient IDs with exactly this (normalized) alias."""
+    def lookup(self, alias: str) -> dict[int, str]:
+        """Ingredient IDs with exactly this (normalized) alias, each with its best alias source."""
         ...
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
@@ -35,13 +43,13 @@ class AliasIndex(Protocol):
 
 
 class InMemoryAliasIndex:
-    def __init__(self, aliases: dict[str, set[int]], refs: dict[int, IngredientRef]) -> None:
+    def __init__(self, aliases: dict[str, dict[int, str]], refs: dict[int, IngredientRef]) -> None:
         self._aliases = aliases
         self._refs = refs
         self._keys = list(aliases)
 
-    def lookup(self, alias: str) -> set[int]:
-        return set(self._aliases.get(alias, set()))
+    def lookup(self, alias: str) -> dict[int, str]:
+        return dict(self._aliases.get(alias, {}))
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
         matches = process.extract(query, self._keys, scorer=fuzz.ratio, limit=k)
@@ -57,15 +65,17 @@ class PgAliasIndex:
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        self._aliases: dict[str, set[int]] = defaultdict(set)
-        for alias, ingredient_id in session.execute(
-            text("SELECT alias, ingredient_id FROM ingredient_aliases")
+        self._aliases: dict[str, dict[int, str]] = defaultdict(dict)
+        for alias, ingredient_id, source in session.execute(
+            text("SELECT alias, ingredient_id, source FROM ingredient_aliases")
         ):
-            self._aliases[alias].add(ingredient_id)
+            known = self._aliases[alias].get(ingredient_id)
+            if known is None or _rank(source) < _rank(known):
+                self._aliases[alias][ingredient_id] = source
         self._refs: dict[int, IngredientRef] = {}
 
-    def lookup(self, alias: str) -> set[int]:
-        return set(self._aliases.get(alias, set()))
+    def lookup(self, alias: str) -> dict[int, str]:
+        return dict(self._aliases.get(alias, {}))
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
         rows = self._session.execute(

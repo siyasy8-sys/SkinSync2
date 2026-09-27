@@ -36,7 +36,7 @@ def normalize(text: str) -> str:
     t = _SYMBOLS.sub("", t)
     t = _NANO.sub("", t)
     t = _CONCENTRATION.sub("", t)
-    t = _SPACED_SLASH.sub("/", t)
+    t = _SPACED_SLASH.sub("/", t.replace("\\", "/"))  # "water\\aqua\\eau" uses backslashes
     t = _SPACED_HYPHEN.sub("-", t)
     t = _WHITESPACE.sub(" ", t)
     return t.strip(_EDGE_PUNCTUATION)

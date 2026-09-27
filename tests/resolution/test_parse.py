@@ -12,6 +12,36 @@ def test_splits_on_top_level_separators_only() -> None:
     assert split_top_level("a [b, c], d") == ["a [b, c]", " d"]
 
 
+def test_line_breaks_are_wrapping_when_commas_separate_entries() -> None:
+    text = "Potassium Hydroxide, Sodium \r\nHyaluronate, \r\nTocopherol"
+
+    assert _raws(parse_ingredient_list(text)) == [
+        "Potassium Hydroxide",
+        "Sodium  Hyaluronate",
+        "Tocopherol",
+    ]
+    assert _raws(parse_ingredient_list("Aqua\nGlycerin\r\nParfum")) == [
+        "Aqua",
+        "Glycerin",
+        "Parfum",
+    ]
+
+
+def test_stacked_may_contain_markers_are_all_removed() -> None:
+    mentions = parse_ingredient_list(
+        "Aqua, Silica [+/- MAY CONTAIN / PEUT CONTENIR CI 77491, CI 77492]"
+    )
+
+    assert _raws(mentions) == ["Aqua", "Silica", "CI 77491", "CI 77492"]
+    assert [m.may_contain for m in mentions] == [False, False, True, True]
+
+
+def test_commas_between_digits_are_part_of_the_name() -> None:
+    mentions = parse_ingredient_list("Aqua, 1,2-Hexanediol, 1,3-Propanediol,Glycerin")
+
+    assert _raws(mentions) == ["Aqua", "1,2-Hexanediol", "1,3-Propanediol", "Glycerin"]
+
+
 def test_positions_follow_label_order_and_strip_header() -> None:
     mentions = parse_ingredient_list("Ingredients: Aqua, Glycerin, Niacinamide.")
 

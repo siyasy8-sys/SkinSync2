@@ -12,6 +12,7 @@ _MAY_CONTAIN = re.compile(
     r"\+\s*/\s*-|±|may contain|peut contenir|kann enthalten|puede contener|può contenere",
     re.IGNORECASE,
 )
+_LEADING_MARKER = re.compile(r"\s*[/:]?\s*(?:" + _MAY_CONTAIN.pattern + r")\s*[:]?", re.IGNORECASE)
 _NOISE = re.compile(
     r"https?://|www\.|distribu|made in|fabriqu|manufactur|\blot\b|batch|\bexp\b|@",
     re.IGNORECASE,
@@ -31,16 +32,30 @@ class Mention:
 
 
 def split_top_level(text: str) -> list[str]:
-    """Splits on separators that are not inside (), [] or {}."""
+    """Splits on separators that are not inside (), [] or {}.
+
+    Line breaks only separate entries when the text has no commas/semicolons;
+    otherwise they are label wrapping ("Sodium\nHyaluronate") and become spaces.
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    if "," in text or ";" in text:
+        text = text.replace("\n", " ")
     parts: list[str] = []
     depth = 0
     current: list[str] = []
-    for char in text:
+    for i, char in enumerate(text):
         if char in _OPEN:
             depth += 1
         elif char in _CLOSE:
             depth = max(depth - 1, 0)
-        if char in _SEPARATORS and depth == 0:
+        # "1,2-Hexanediol": a comma between digits is part of a chemical name.
+        in_number = (
+            char == ","
+            and 0 < i < len(text) - 1
+            and text[i - 1].isdigit()
+            and text[i + 1].isdigit()
+        )
+        if char in _SEPARATORS and depth == 0 and not in_number:
             parts.append("".join(current))
             current = []
         else:
@@ -74,6 +89,9 @@ def _split_may_contain(text: str) -> tuple[str, str]:
         cut = tail.rfind(closer)
         if cut != -1:
             tail = tail[:cut] + tail[cut + 1 :]
+    # Markers are often stacked: "[+/- MAY CONTAIN / PEUT CONTENIR CI 77491]".
+    while stacked := _LEADING_MARKER.match(tail):
+        tail = tail[stacked.end() :]
     return head, tail.lstrip(" :")
 
 

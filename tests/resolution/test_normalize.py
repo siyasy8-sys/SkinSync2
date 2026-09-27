@@ -14,6 +14,7 @@ from app.resolution.normalize import normalize, variants
         ("Aloe Barbadensis Leaf Juice*", "aloe barbadensis leaf juice"),
         ("Sodium Hyaluronate®", "sodium hyaluronate"),
         ("Caprylic/ Capric Triglyceride", "caprylic/capric triglyceride"),
+        ("Water\\Aqua\\Eau", "water/aqua/eau"),
         ("Phenoxyeth - anol", "phenoxyeth-anol"),
         ("PEG - 8", "peg-8"),
         ("  Parfum.  ", "parfum"),

@@ -15,12 +15,22 @@ NAMES = {
     10: "phenoxyethanol",
     11: "zea mays starch",
     12: "parfum",
+    14: "water",  # CosIng also has a separate WATER entry; "water" is AQUA's US name too
+    15: "ci 77499",
+    16: "ci 77491",
 }
-EXTRA_ALIASES = {"water": {1}, "fragrance": {12}, "shared name": {2, 8}, "ceteth-2": {13}}
+EXTRA_ALIASES: dict[str, dict[int, str]] = {
+    "water": {1: "inci_usa", 14: "inci"},
+    "fragrance": {12: "inci_usa"},
+    "shared name": {2: "inci_usa", 8: "inci_usa"},
+    "ceteth-2": {13: "inci"},
+    "titanium dioxide": {7: "inci", 6: "inci_usa"},
+    "iron oxides": {15: "inci_usa", 16: "inci_usa"},
+}
 
 
 def _index() -> InMemoryAliasIndex:
-    aliases: dict[str, set[int]] = {name: {i} for i, name in NAMES.items()}
+    aliases: dict[str, dict[int, str]] = {name: {i: "inci"} for i, name in NAMES.items()}
     aliases.update(EXTRA_ALIASES)
     refs = {i: IngredientRef(i, str(1000 + i), name.upper()) for i, name in NAMES.items()}
     refs[13] = IngredientRef(13, "1013", "CETETH-2")
@@ -58,6 +68,32 @@ def test_slash_synonyms_that_agree_resolve() -> None:
     outcome = _resolver().resolve("Aqua/Water/Eau")
     assert isinstance(outcome, Resolved)
     assert (outcome.ingredient_id, outcome.variant, outcome.confidence) == (1, "slash_part", 0.95)
+
+
+def test_variants_corroborate_to_the_one_shared_ingredient() -> None:
+    # Each name alone is ambiguous; together they point at one ingredient.
+    assert _resolved_id("Water (Aqua)") == 1
+    assert _resolved_id("Titanium Dioxide (CI 77891)") == 6
+    assert _resolved_id("Iron Oxides (CI 77499)") == 15
+
+
+def test_bare_name_prefers_the_entry_it_is_the_inci_name_of() -> None:
+    assert _resolved_id("Water") == 14
+    assert _resolved_id("Titanium Dioxide") == 7
+    outcome = _resolver().resolve("Water")
+    assert isinstance(outcome, Resolved) and outcome.confidence == 0.95
+
+
+def test_inci_tiebreak_can_be_disabled_for_ablation() -> None:
+    outcome = _resolver(er_inci_tiebreak=False).resolve("Water")
+    assert isinstance(outcome, Unresolved)
+    assert outcome.reason == "ambiguous"
+
+
+def test_no_tiebreak_when_no_single_inci_owner() -> None:
+    outcome = _resolver().resolve("Iron Oxides")
+    assert isinstance(outcome, Unresolved)
+    assert outcome.reason == "ambiguous"
 
 
 def test_slash_parts_naming_different_ingredients_are_ambiguous() -> None:
