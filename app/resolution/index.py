@@ -8,6 +8,8 @@ from rapidfuzz import fuzz, process
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.resolution.normalize import compact
+
 
 @dataclass(frozen=True)
 class IngredientRef:
@@ -30,9 +32,24 @@ def _rank(source: str) -> int:
     return SOURCE_RANK.get(source, len(SOURCE_RANK))
 
 
+def _compact_map(aliases: dict[str, dict[int, str]]) -> dict[str, dict[int, str]]:
+    out: dict[str, dict[int, str]] = defaultdict(dict)
+    for alias, owners in aliases.items():
+        key = compact(alias)
+        for ingredient_id, source in owners.items():
+            known = out[key].get(ingredient_id)
+            if known is None or _rank(source) < _rank(known):
+                out[key][ingredient_id] = source
+    return out
+
+
 class AliasIndex(Protocol):
     def lookup(self, alias: str) -> dict[int, str]:
         """Ingredient IDs with exactly this (normalized) alias, each with its best alias source."""
+        ...
+
+    def lookup_compact(self, compacted: str) -> dict[int, str]:
+        """Like lookup, but on aliases with spaces and hyphens removed."""
         ...
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
@@ -45,11 +62,15 @@ class AliasIndex(Protocol):
 class InMemoryAliasIndex:
     def __init__(self, aliases: dict[str, dict[int, str]], refs: dict[int, IngredientRef]) -> None:
         self._aliases = aliases
+        self._compact = _compact_map(aliases)
         self._refs = refs
         self._keys = list(aliases)
 
     def lookup(self, alias: str) -> dict[int, str]:
         return dict(self._aliases.get(alias, {}))
+
+    def lookup_compact(self, compacted: str) -> dict[int, str]:
+        return dict(self._compact.get(compacted, {}))
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
         matches = process.extract(query, self._keys, scorer=fuzz.ratio, limit=k)
@@ -72,10 +93,14 @@ class PgAliasIndex:
             known = self._aliases[alias].get(ingredient_id)
             if known is None or _rank(source) < _rank(known):
                 self._aliases[alias][ingredient_id] = source
+        self._compact = _compact_map(self._aliases)
         self._refs: dict[int, IngredientRef] = {}
 
     def lookup(self, alias: str) -> dict[int, str]:
         return dict(self._aliases.get(alias, {}))
+
+    def lookup_compact(self, compacted: str) -> dict[int, str]:
+        return dict(self._compact.get(compacted, {}))
 
     def candidates(self, query: str, k: int) -> list[AliasHit]:
         rows = self._session.execute(

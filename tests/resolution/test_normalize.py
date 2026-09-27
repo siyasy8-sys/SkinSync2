@@ -1,6 +1,6 @@
 import pytest
 
-from app.resolution.normalize import normalize, variants
+from app.resolution.normalize import compact, normalize, variants
 
 
 @pytest.mark.parametrize(
@@ -64,3 +64,47 @@ def test_slash_parts() -> None:
         ("water", "slash_part"),
         ("eau", "slash_part"),
     ]
+
+
+RUSSIAN_WORD = "".join(
+    chr(c) for c in (0x421, 0x44B, 0x432, 0x43E, 0x440, 0x43E, 0x442, 0x43A, 0x430)
+)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("\N{CYRILLIC CAPITAL LETTER A}QUA", "aqua"),  # Cyrillic A in a Latin word
+        ("CAR\N{CYRILLIC CAPITAL LETTER VE}\N{CYRILLIC CAPITAL LETTER O}MER", "carbomer"),
+        (RUSSIAN_WORD, RUSSIAN_WORD.lower()),  # a genuinely Cyrillic word is left alone
+        ("CI77492", "ci 77492"),
+        ("C1 15510 (orange 4)", "ci 15510 (orange 4)"),
+        ("Ethylhexylglycerin (CODE F.I.L. D235677/1)", "ethylhexylglycerin"),
+        ("PARFUM F.I.L#C16232/5", "parfum"),
+        ("Citric Acid. FIL 1837", "citric acid"),
+        ("Filipendula Ulmaria Extract", "filipendula ulmaria extract"),  # "fil" inside a word
+        ("/ Aloe Barbadensis Leaf Juice /", "aloe barbadensis leaf juice"),
+    ],
+)
+def test_normalize_label_noise(raw: str, expected: str) -> None:
+    assert normalize(raw) == expected
+
+
+def _clauses(normalized: str) -> list[str]:
+    return [v.text for v in variants(normalized) if v.kind == "clause"]
+
+
+def test_clause_variants() -> None:
+    assert _clauses("fragrance: butylphenyl methylpropional") == [
+        "butylphenyl methylpropional",
+        "fragrance",
+    ]
+    assert "glyceryl caprylate" in _clauses("glyceryl caprylate. storage: store in a cool place")
+    assert _clauses("xanthan gum. lecithin") == []  # a short tail may be a real ingredient
+    # A missing comma, not prose: don't pluck out the first name.
+    assert _clauses("acetylated lanolin alcohol. butyrospermum parkii butter extract") == []
+
+
+def test_compact() -> None:
+    assert compact("sod ium hyaluronate") == compact("sodium hyaluronate") == "sodiumhyaluronate"
+    assert compact("propyl paraben") == compact("propylparaben")

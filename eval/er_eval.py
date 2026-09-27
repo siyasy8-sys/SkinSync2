@@ -44,9 +44,10 @@ def load_labeled(path: Path, known_cosing_ids: set[str]) -> list[dict[str, str]]
             if not gold or gold.upper() == GOLD_SKIP:
                 continue
             if gold.upper() == GOLD_NONE:
-                row["gold_ingredient_id"] = GOLD_NONE
+                gold = GOLD_NONE
             elif gold not in known_cosing_ids:
                 raise LabelError(f"{path}:{line}: unknown gold_ingredient_id {gold!r}")
+            row["gold_ingredient_id"] = gold  # stripped: "35360 " must equal "35360"
             rows.append(row)
     return rows
 

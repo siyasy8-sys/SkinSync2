@@ -18,6 +18,8 @@ NAMES = {
     14: "water",  # CosIng also has a separate WATER entry; "water" is AQUA's US name too
     15: "ci 77499",
     16: "ci 77491",
+    17: "propylparaben",
+    18: "butylphenyl methylpropional",
 }
 EXTRA_ALIASES: dict[str, dict[int, str]] = {
     "water": {1: "inci_usa", 14: "inci"},
@@ -174,3 +176,25 @@ def test_stages_are_independently_callable_and_ablatable() -> None:
 def test_results_are_memoized_per_normalized_text() -> None:
     resolver = _resolver()
     assert resolver.resolve("GLYCERIN") is resolver.resolve(" glycerin. ")
+
+
+def test_broken_or_joined_words_match_on_compact_form() -> None:
+    outcome = _resolver().resolve("Sod ium Hyaluronate")
+    assert isinstance(outcome, Resolved)
+    assert (outcome.ingredient_id, outcome.stage, outcome.confidence) == (3, "exact", 0.97)
+    assert _resolved_id("Propyl Paraben") == 17
+
+
+def test_clause_variants_resolve_labelled_entries() -> None:
+    assert _resolved_id("Fragrance: Butylphenyl Methylpropional") == 18
+
+
+def test_long_mentions_do_not_resolve_through_a_single_part() -> None:
+    unseparated = (
+        "AQUA/WATER/EAU GLYCERIN COCO-CAPRYLATE CAPRATE STEARYL ALCOHOL POLYGLYCERYL-3 "
+        "DICITRATE STEARATE CENTAUREA CYANUS FLOWER WATER DIMETHICONE PARFUM CARBOMER"
+    )
+    assert _resolved_id(unseparated) is None
+    prose = "et hydrate la peau en profondeur grace a son extrait. Ingredients: Aqua"
+    assert _resolved_id(prose) is None
+    assert _resolved_id("Aqua/Water/Eau") == 1  # short: parts still used

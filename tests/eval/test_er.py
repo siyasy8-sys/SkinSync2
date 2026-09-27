@@ -164,5 +164,7 @@ def test_load_labeled_validates_gold_values(tmp_path: Path) -> None:
     assert load_labeled(path, set()) == []
     _csv(path, gold="31959")
     assert len(load_labeled(path, {"31959"})) == 1
+    _csv(path, gold=" 31959 ")  # stray spaces from a spreadsheet
+    assert load_labeled(path, {"31959"})[0]["gold_ingredient_id"] == "31959"
     with pytest.raises(LabelError, match="unknown gold_ingredient_id"):
         load_labeled(path, {"1"})

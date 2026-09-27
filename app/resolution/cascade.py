@@ -15,7 +15,7 @@ from rapidfuzz import fuzz
 
 from app.config import Settings
 from app.resolution.index import AliasIndex
-from app.resolution.normalize import Variant, VariantKind, normalize, variants
+from app.resolution.normalize import Variant, VariantKind, compact, normalize, variants
 
 StageName = Literal["exact", "fuzzy", "embedding", "llm"]
 Reason = Literal["no_match", "ambiguous", "below_threshold", "suspected_noise"]
@@ -26,7 +26,13 @@ EXACT_CONFIDENCE: dict[VariantKind, float] = {
     "no_paren": 0.98,
     "paren": 0.95,
     "slash_part": 0.95,
+    "clause": 0.95,
 }
+# A match found only after removing spaces/hyphens ("sod ium hyaluronate").
+COMPACT_CONFIDENCE = 0.97
+# Derived variants (parentheses, slash parts, clauses) are only trusted on short mentions;
+# on a whole unseparated list or a paragraph they would pluck out an arbitrary name.
+DERIVED_KINDS: frozenset[VariantKind] = frozenset({"paren", "slash_part", "clause"})
 INCI_TIEBREAK_CONFIDENCE = 0.95
 
 
@@ -99,13 +105,35 @@ def exact_stage(ctx: MentionContext) -> Outcome | None:
     3. A single name shared by several ingredients falls back to the one whose official
        INCI name it is (if enabled); anything else is ambiguous and stops the cascade.
     """
-    hits = [(v, h) for v in ctx.variants if (h := ctx.index.lookup(v.text))]
+    usable = [
+        v
+        for v in ctx.variants
+        if v.kind not in DERIVED_KINDS
+        or len(ctx.normalized.split()) <= ctx.settings.er_max_words_for_parts
+    ]
+    hits: list[tuple[Variant, dict[int, str]]] = []
+    via_compact: set[str] = set()
+    for v in usable:
+        found = ctx.index.lookup(v.text)
+        if not found:
+            found = ctx.index.lookup_compact(compact(v.text))
+            if found:
+                via_compact.add(v.text)
+        if found:
+            hits.append((v, found))
     if not hits:
         return None
     first_variant, first_hits = hits[0]
+
+    def confidence(variant: Variant) -> float:
+        base = EXACT_CONFIDENCE[variant.kind]
+        return min(base, COMPACT_CONFIDENCE) if variant.text in via_compact else base
+
     if first_variant.kind == "full" and len(first_hits) == 1:
         (ingredient_id,) = first_hits
-        return Resolved(ingredient_id, "exact", 1.0, "full", first_variant.text)
+        return Resolved(
+            ingredient_id, "exact", confidence(first_variant), "full", first_variant.text
+        )
 
     common = set(first_hits).intersection(*(h for _, h in hits[1:]))
     if len(common) == 1:
@@ -113,7 +141,7 @@ def exact_stage(ctx: MentionContext) -> Outcome | None:
         return Resolved(
             ingredient_id,
             "exact",
-            EXACT_CONFIDENCE[first_variant.kind],
+            confidence(first_variant),
             first_variant.kind,
             first_variant.text,
         )
@@ -138,7 +166,7 @@ def exact_stage(ctx: MentionContext) -> Outcome | None:
                 return Resolved(
                     winner,
                     "exact",
-                    min(EXACT_CONFIDENCE[first_variant.kind], INCI_TIEBREAK_CONFIDENCE),
+                    min(confidence(first_variant), INCI_TIEBREAK_CONFIDENCE),
                     first_variant.kind,
                     first_variant.text,
                 )
@@ -161,7 +189,12 @@ def fuzzy_stage(ctx: MentionContext) -> Outcome:
     """
     s = ctx.settings
     scorer = _scorer(s.er_fuzzy_scorer)
-    queries = [v.text for v in ctx.variants if v.kind in ("full", "no_paren")]
+    short = len(ctx.normalized.split()) <= s.er_max_words_for_parts
+    queries = [
+        v.text
+        for v in ctx.variants
+        if v.kind in ("full", "no_paren") or (short and v.kind == "clause")
+    ]
     best: dict[int, tuple[str, float]] = {}
     for query in queries:
         for hit in ctx.index.candidates(query, s.er_candidate_k):
