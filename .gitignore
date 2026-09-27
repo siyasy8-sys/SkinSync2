@@ -28,4 +28,4 @@ crash.log
 logs/
 
 # Raw source caches (see pipelines/SOURCES.md)
-data/
+/data/
