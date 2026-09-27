@@ -1,4 +1,6 @@
 import json
+import re
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -6,7 +8,13 @@ import pytest
 from app.config import Settings
 from pipelines.cache import RawCache
 from pipelines.http import make_client
-from pipelines.sources.cosing import fetch_cosing, parse_ingredient, parse_search_response
+from pipelines.sources.cosing import (
+    InventoryError,
+    fetch_cosing,
+    fetch_cosing_inventory,
+    parse_ingredient,
+    parse_search_response,
+)
 from tests.conftest import FIXTURES
 
 
@@ -69,3 +77,107 @@ def test_error_body_is_rejected_and_not_cached(settings: Settings) -> None:
         fetch_cosing(client, RawCache(settings.data_dir, "cosing"), settings, ())
 
     assert not list(settings.data_dir.glob("cosing/*/*.json"))
+
+
+def _inventory_handler(
+    ids: list[str], *, reported_total: int | None = None, partition_total: int | None = None
+) -> Callable[[httpx.Request], httpx.Response]:
+    """Fake search API: filters `ids` by the substanceId range (compared as text)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = json.loads(re.search(rb'\{"bool".*\}', request.content).group())  # type: ignore[union-attr]
+        ranges = [m["range"]["substanceId"] for m in query["bool"]["must"] if "range" in m]
+        hits = ids
+        if ranges:
+            lo, hi = ranges[0].get("gte"), ranges[0].get("lt")
+            hits = [i for i in ids if (lo is None or i >= str(lo)) and (hi is None or i < str(hi))]
+        size = int(request.url.params["pageSize"])
+        page = int(request.url.params["pageNumber"])
+        chunk = hits[(page - 1) * size : page * size]
+        total = len(hits)
+        if not ranges and reported_total is not None:
+            total = reported_total
+        if ranges and partition_total is not None:
+            total = partition_total
+        results = [
+            {"metadata": {"itemType": ["ingredient"], "substanceId": [i], "inciName": [f"X{i}"]}}
+            for i in chunk
+        ]
+        return httpx.Response(200, json={"totalResults": total, "results": results})
+
+    return handler
+
+
+def test_inventory_fetches_every_partition_and_checks_completeness(settings: Settings) -> None:
+    ids = ["101", "1020", "305", "9001", "99"] + [f"5{n:03d}" for n in range(7)]
+    small_pages = settings.model_copy(update={"cosing_inventory_page_size": 3})
+
+    with make_client(small_pages, httpx.MockTransport(_inventory_handler(ids))) as client:
+        records, duplicates = fetch_cosing_inventory(
+            client, RawCache(small_pages.data_dir, "cosing"), small_pages
+        )
+
+    assert sorted(r.cosing_id for r in records) == sorted(ids)
+    assert duplicates == 0
+
+
+def test_inventory_dedupes_identical_duplicate_documents(settings: Settings) -> None:
+    ids = ["101", "101", "305"]  # the index returns 101 twice, identically
+    with make_client(settings, httpx.MockTransport(_inventory_handler(ids))) as client:
+        records, duplicates = fetch_cosing_inventory(
+            client, RawCache(settings.data_dir, "cosing"), settings
+        )
+
+    assert sorted(r.cosing_id for r in records) == ["101", "305"]
+    assert duplicates == 1
+
+
+def test_inventory_requests_a_stable_sort(settings: Settings) -> None:
+    requests: list[httpx.Request] = []
+    inner = _inventory_handler(["101"])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return inner(request)
+
+    with make_client(settings, httpx.MockTransport(handler)) as client:
+        fetch_cosing_inventory(client, RawCache(settings.data_dir, "cosing"), settings)
+
+    sort = json.dumps([{"field": "substanceId", "order": "ASC"}]).encode()
+    assert all(sort in r.content for r in requests)
+
+
+def test_inventory_fails_when_partitions_miss_records(settings: Settings) -> None:
+    handler = _inventory_handler(["101", "305"], reported_total=3)  # API claims 3 hits
+    with (
+        make_client(settings, httpx.MockTransport(handler)) as client,
+        pytest.raises(InventoryError, match="expected 3"),
+    ):
+        fetch_cosing_inventory(client, RawCache(settings.data_dir, "cosing"), settings)
+
+
+def test_inventory_fails_when_a_partition_exceeds_the_paging_window(settings: Settings) -> None:
+    handler = _inventory_handler(["101"], partition_total=10_001)
+    with (
+        make_client(settings, httpx.MockTransport(handler)) as client,
+        pytest.raises(InventoryError, match="paging window"),
+    ):
+        fetch_cosing_inventory(client, RawCache(settings.data_dir, "cosing"), settings)
+
+
+def test_parse_keeps_status_and_other_names() -> None:
+    record = parse_ingredient(
+        {
+            "itemType": ["ingredient"],
+            "substanceId": ["1"],
+            "inciName": ["AQUA"],
+            "status": ["Active"],
+            "inciUsaName": ["WATER"],
+            "innName": [],
+            "phEurName": ["-"],
+        }
+    )
+
+    assert record is not None
+    assert record.status == "Active"
+    assert record.names == {"inci_usa": ["WATER"]}

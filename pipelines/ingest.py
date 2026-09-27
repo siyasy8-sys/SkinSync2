@@ -1,6 +1,7 @@
-"""Week 1 sample loaders.
+"""Source loaders.
 
     uv run python -m pipelines.ingest {cosing,obf,pmc,all} [--limit N] [--refresh] [--prune]
+    uv run python -m pipelines.ingest cosing --full    # the whole CosIng inventory
 
 Each source runs as one tracked run (an `ingestion_runs` row) and commits its
 rows only if the whole load succeeds. Raw responses come from data/raw/ when
@@ -33,6 +34,7 @@ class RunOptions:
     limit: int | None = None
     refresh: bool = False
     prune: bool = False
+    full: bool = False
 
 
 Loader = Callable[[Session, Settings, RunStats, RunOptions], None]
@@ -92,7 +94,11 @@ def run_cosing(session: Session, settings: Settings, stats: RunStats, opts: RunO
         stats.errors.append("prune skipped: not supported for cosing (it isn't resampled)")
     cache = RawCache(settings.data_dir, "cosing", refresh=opts.refresh)
     with make_client(settings) as client:
-        records = cosing.fetch_cosing(client, cache, settings, SEED_ACTIVES)
+        if opts.full:
+            records, duplicates = cosing.fetch_cosing_inventory(client, cache, settings)
+            stats.counts["duplicate_documents"] = duplicates
+        else:
+            records = cosing.fetch_cosing(client, cache, settings, SEED_ACTIVES)
     if opts.limit is not None:
         records = records[: opts.limit]
     _record(stats, cache, len(records), *cosing.load_ingredients(session, records))
@@ -153,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--refresh", action="store_true", help="ignore cache; new snapshot")
     parser.add_argument(
+        "--full", action="store_true", help="cosing: fetch the full inventory, not a sample"
+    )
+    parser.add_argument(
         "--prune",
         action="store_true",
         help="delete this source's rows that aren't in the new sample (obf, pmc)",
@@ -163,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     session_factory = get_sessionmaker()
     names = list(SOURCES) if args.source == "all" else [args.source]
     for name in names:
-        opts = RunOptions(limit=args.limit, refresh=args.refresh, prune=args.prune)
+        opts = RunOptions(limit=args.limit, refresh=args.refresh, prune=args.prune, full=args.full)
         stats = run_source(session_factory, settings, name, opts)
         totals = {k: v for k, v in stats.counts.items() if not k.startswith(SEED_PREFIX)}
         print(json.dumps({"source": name, **totals}))

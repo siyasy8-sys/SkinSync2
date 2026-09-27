@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     cosing_requests_per_second: float = 1.0
     cosing_page_size: int = 100
     cosing_sample_pages: int = 3
+    cosing_inventory_page_size: int = 200  # the API's maximum
 
     # Open Beauty Facts: official daily dump (API scraping is not allowed)
     obf_dump_url: str = "https://static.openbeautyfacts.org/data/openbeautyfacts-products.jsonl.gz"
