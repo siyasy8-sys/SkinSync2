@@ -121,9 +121,11 @@ All data lives in one Postgres database. Structured facts and vector chunks shar
 | Table | Key columns | Notes |
 | --- | --- | --- |
 | `ingredients` | id, cosing\_id, inci\_name, functions\[\], restrictions, cas\_number | One row per canonical ingredient; `cosing_id` (CosIng substance ID) is the upsert key |
-| `ingredient_aliases` | alias, ingredient\_id, source, confidence | Every known name, mapped to its canonical ingredient |
+| `ingredient_aliases` | alias, ingredient\_id, source, confidence | Every known name (INCI, US INCI, INN, Ph. Eur., glossary, CAS), normalized and mapped to its canonical ingredient |
 | `products` | id, source, source\_id, name, brand, category, raw\_ingredient\_text | Raw text is kept for debugging parses; (source, source\_id) is the upsert key, e.g. the Open Beauty Facts barcode |
-| `product_ingredients` | product\_id, ingredient\_id, position, match\_confidence | Position approximates concentration order |
+| `product_ingredients` | product\_id, ingredient\_id, position, mention, stage, match\_confidence, may\_contain | Position approximates concentration order; only confident matches are stored |
+| `resolution_queue` | product\_id, position, mention, normalized, reason, candidates, status | Mentions the cascade would not resolve confidently (no match, ambiguous, below threshold, suspected noise), with top-5 candidates |
+| `ingredient_relations` | ingredient\_id, related\_id, kind, reviewed | Salt/ester links between distinct ingredients (e.g. sodium hyaluronate → hyaluronic acid); only reviewed rows are used at query time |
 | `documents` | id, source, source\_id, pmid, title, url, published\_at, license, abstract, full\_text | One row per paper or monograph; (source, source\_id) is the upsert key, e.g. the PMCID. `abstract` and `full_text` are nullable, and `full_text` is filled only for CC BY or CC0 articles |
 | `chunks` | id, document\_id, text, embedding vector(384), tsv, ingredient\_ids\[\] | Vector plus full-text index; ingredient tags enable filtered search |
 | `interactions` | ingredient\_a, ingredient\_b, effect, evidence\_level, chunk\_ids\[\], reviewed | Only reviewed rows are used at query time |
@@ -139,10 +141,12 @@ Entity resolution is the project's technical centerpiece. It maps any ingredient
 
 1. **Normalize:** lowercase, strip concentrations ("2%"), punctuation, and parenthetical notes; split compound strings like "Water/Aqua/Eau."
 2. **Exact alias lookup** in `ingredient_aliases`.
-3. **Fuzzy match:** RapidFuzz token-set ratio plus a Postgres trigram search; accept at a score of at least 92.
+3. **Fuzzy match:** a Postgres trigram search fetches candidate aliases, and RapidFuzz token-sort ratio scores them. Accept at a score of at least 92 **and** a margin of at least 3 over the best candidate for a different ingredient. Token-sort replaces token-set, because token-set scores a subset as 100 ("sodium hyaluronate" vs "hydrolyzed sodium hyaluronate"). Scores from 80 up to the threshold are a review band: never used at query time, queued with their top-5 candidates.
 4. **Embedding match:** nearest canonical names by vector similarity; take the top 5 as candidates.
 5. **LLM adjudication:** for scores below the threshold, the LLM picks one candidate or "none" in structured output. Its decision is cached as a new alias with its confidence.
-6. **Unresolved:** log the mention to a review queue. Never guess.
+6. **Unresolved:** log the mention to the `resolution_queue` with a reason and its candidates. Never guess.
+
+Salts and esters (sodium hyaluronate, tocopheryl acetate) are distinct canonical ingredients, as in CosIng. They are linked to their parent in `ingredient_relations`, not merged. Stages 4–5 are built in Week 3, when embeddings exist; the stage interface and the queued candidates are ready for them.
 
 **Measuring it.** Hold out about 300 labeled mention-to-ingredient pairs, including hard cases (misspellings, trade names, multilingual labels). Report precision, recall, and how many mentions each stage resolves. Compare cascade ablations, such as with and without the LLM step, so there's a tradeoff story to tell.
 

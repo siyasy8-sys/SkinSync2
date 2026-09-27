@@ -1,7 +1,21 @@
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import ARRAY, Date, DateTime, Identity, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    ARRAY,
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +33,9 @@ class Ingredient(Base):
     functions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     restrictions: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     cas_number: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str | None] = mapped_column(String(32))
+    # Other CosIng names (US INCI, INN, Ph. Eur., glossary): alias material.
+    names: Mapped[dict[str, list[str]]] = mapped_column(JSONB, server_default="{}")
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -73,3 +90,93 @@ class IngestionRun(Base):
     status: Mapped[str] = mapped_column(String(16))
     counts: Mapped[dict[str, int]] = mapped_column(JSONB, server_default="{}")
     errors: Mapped[list[str]] = mapped_column(JSONB, server_default="[]")
+
+
+class IngredientAlias(Base):
+    """Every known name for a canonical ingredient, normalized with app.resolution.normalize."""
+
+    __tablename__ = "ingredient_aliases"
+    __table_args__ = (
+        UniqueConstraint("alias", "ingredient_id"),
+        # Trigram index for the fuzzy stage's candidate search (pg_trgm).
+        Index(
+            "ix_ingredient_aliases_alias_trgm",
+            "alias",
+            postgresql_using="gin",
+            postgresql_ops={"alias": "gin_trgm_ops"},
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    alias: Mapped[str] = mapped_column(Text)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id", ondelete="CASCADE"))
+    source: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float, server_default="1.0")
+
+
+class ProductIngredient(Base):
+    """A resolved mention on a product label. Only confident matches are stored here."""
+
+    __tablename__ = "product_ingredients"
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), primary_key=True
+    )
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True
+    )
+    mention: Mapped[str] = mapped_column(Text)
+    stage: Mapped[str] = mapped_column(String(16))
+    match_confidence: Mapped[float] = mapped_column(Float)
+    may_contain: Mapped[bool] = mapped_column(Boolean, server_default="false")
+
+
+class ResolutionQueue(Base):
+    """Mentions the cascade would not resolve confidently. Never guessed; reviewed by a human
+    (or, from Week 3, the LLM adjudicator using the stored candidates)."""
+
+    __tablename__ = "resolution_queue"
+    __table_args__ = (UniqueConstraint("product_id", "position", "normalized"),)
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"))
+    position: Mapped[int] = mapped_column(Integer)
+    mention: Mapped[str] = mapped_column(Text)
+    normalized: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(String(32))
+    candidates: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default="[]")
+    status: Mapped[str] = mapped_column(String(16), server_default="open")
+    resolved_ingredient_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class IngredientRelation(Base):
+    """Salt/ester links between distinct ingredients. Only reviewed rows are used at query time."""
+
+    __tablename__ = "ingredient_relations"
+
+    ingredient_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True
+    )
+    related_id: Mapped[int] = mapped_column(
+        ForeignKey("ingredients.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    source: Mapped[str] = mapped_column(String(32))
+    reviewed: Mapped[bool] = mapped_column(Boolean, server_default="false")
+
+
+class EvalRun(Base):
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(Identity(), primary_key=True)
+    suite: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    config: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
