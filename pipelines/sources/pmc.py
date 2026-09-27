@@ -206,10 +206,21 @@ def _any_tiab(terms: tuple[str, ...]) -> str:
     return "(" + " OR ".join(f"{t}[tiab]" for t in terms) + ")"
 
 
-def search_query(seed: str, skin_terms: tuple[str, ...], topic_terms: tuple[str, ...]) -> str:
-    """Seed, a skin term and a dermatology/cosmetic term, all in title/abstract."""
+def search_query(
+    seed: str,
+    skin_terms: tuple[str, ...],
+    topic_terms: tuple[str, ...],
+    synonyms: tuple[str, ...] = (),
+) -> str:
+    """Seed (or any synonym), a skin term and a dermatology/cosmetic term, all in
+    title/abstract. Without synonyms the query is exactly the single-name form, so
+    existing cache keys stay valid."""
+    if synonyms:
+        seed_clause = "(" + " OR ".join(f'"{name.lower()}"[tiab]' for name in synonyms) + ")"
+    else:
+        seed_clause = f'"{seed.lower()}"[tiab]'
     return (
-        f'"{seed.lower()}"[tiab] AND {_any_tiab(skin_terms)} AND {_any_tiab(topic_terms)} '
+        f"{seed_clause} AND {_any_tiab(skin_terms)} AND {_any_tiab(topic_terms)} "
         f"AND {LICENSE_FILTER}"
     )
 
@@ -242,7 +253,12 @@ def fetch_pmc(
         params: dict[str, str | int] = {
             **base,
             "db": "pmc",
-            "term": search_query(seed, settings.pmc_skin_terms, settings.pmc_topic_terms),
+            "term": search_query(
+                seed,
+                settings.pmc_skin_terms,
+                settings.pmc_topic_terms,
+                settings.pmc_seed_synonyms.get(seed, ()),
+            ),
             "retmax": per_seed,
             "retmode": "json",
             "sort": "relevance",
