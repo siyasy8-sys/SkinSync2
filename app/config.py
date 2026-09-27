@@ -36,6 +36,14 @@ class Settings(BaseSettings):
     obf_prefer_english: bool = True
     obf_category_pattern: str = r"skin|face|facial|moistur|serum|sun|cleanser|lotion|cream"
 
+    # Entity resolution (see SPEC.md -> Entity resolution). Tune against eval/data/er_mentions.csv.
+    er_fuzzy_scorer: str = "token_sort_ratio"  # any rapidfuzz.fuzz scorer name
+    er_fuzzy_threshold: float = 92.0  # accept at or above this score...
+    er_fuzzy_margin: float = 3.0  # ...and at least this far ahead of the next ingredient
+    er_review_floor: float = 80.0  # [floor, threshold): queued as below_threshold
+    er_candidate_k: int = 20  # trigram candidates fetched per query
+    er_queue_candidates: int = 5  # candidates stored with each queued mention
+
     # NCBI E-utilities (PMC open-access subset)
     ncbi_eutils_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     ncbi_email: str | None = None
