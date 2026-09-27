@@ -1,5 +1,6 @@
 """Splits a product's raw ingredient text into ordered mentions."""
 
+import html
 import re
 from dataclasses import dataclass
 
@@ -20,7 +21,10 @@ _NOISE = re.compile(
 _COLOUR_INDEX = re.compile(r"^\s*(?:ci|e)\s?\d{3,5}\b", re.IGNORECASE)
 _SEPARATORS = ",;•\n"
 _OPEN, _CLOSE = "([{", ")]}"
-_AMPERSAND = re.compile(r"\s+&\s+")
+# Premix joiners: "A & B" and the INCI blend convention "A (and) B". A bare "and" is not
+# split: two CosIng names contain it ("TERPENES AND TERPENOIDS") and prose uses it.
+_PREMIX = re.compile(r"\s+&\s+|\s*\(and\)\s*", re.IGNORECASE)
+_DASH_LIST = re.compile(r"\s+[-\u2013]\s+")
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,10 @@ def split_top_level(text: str) -> list[str]:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     if "," in text or ";" in text:
         text = text.replace("\n", " ")
+    elif len(_DASH_LIST.findall(text)) >= 2:
+        # "aqua - glycerin - parfum": a dash-separated list (only when there are no commas,
+        # so a comma list's line-wrap breaks like "Phenoxyeth - anol" stay intact).
+        text = _DASH_LIST.sub(",", text)
     parts: list[str] = []
     depth = 0
     current: list[str] = []
@@ -103,6 +111,7 @@ def _unwrap(text: str) -> str:
 
 
 def parse_ingredient_list(text: str) -> list[Mention]:
+    text = html.unescape(text)  # "&gt;", "&amp;" from scraped labels
     definite, may_contain = _split_may_contain(_HEADER.sub("", text.strip()))
     mentions: list[Mention] = []
     position = 0
@@ -112,7 +121,7 @@ def parse_ingredient_list(text: str) -> list[Mention]:
             if not cleaned:
                 continue
             position += 1
-            for piece in _AMPERSAND.split(cleaned):
+            for piece in _PREMIX.split(cleaned):
                 piece = piece.strip(" .:")
                 if piece:
                     mentions.append(

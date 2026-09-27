@@ -36,6 +36,48 @@ def test_stacked_may_contain_markers_are_all_removed() -> None:
     assert [m.may_contain for m in mentions] == [False, False, True, True]
 
 
+def test_inci_and_blend_convention_splits_like_ampersand() -> None:
+    mentions = parse_ingredient_list("Aqua, Butylene Glycol (and) Rutin (AND) Aqua, Parfum")
+
+    assert [(m.raw, m.position) for m in mentions] == [
+        ("Aqua", 1),
+        ("Butylene Glycol", 2),
+        ("Rutin", 2),
+        ("Aqua", 2),
+        ("Parfum", 3),
+    ]
+
+
+def test_bare_and_is_not_a_separator() -> None:
+    assert _raws(parse_ingredient_list("Terpenes and Terpenoids, Aqua")) == [
+        "Terpenes and Terpenoids",
+        "Aqua",
+    ]
+
+
+def test_dash_separated_list_without_commas() -> None:
+    assert _raws(parse_ingredient_list("aqua - coco-glucoside - glycerin - parfum")) == [
+        "aqua",
+        "coco-glucoside",
+        "glycerin",
+        "parfum",
+    ]
+    # With commas present, a spaced dash is label wrapping, not a separator.
+    assert _raws(parse_ingredient_list("Aqua, Phenoxyeth - anol, Parfum")) == [
+        "Aqua",
+        "Phenoxyeth - anol",
+        "Parfum",
+    ]
+
+
+def test_html_entities_are_decoded() -> None:
+    assert _raws(parse_ingredient_list("Aqua, Parfum &amp; Linalool")) == [
+        "Aqua",
+        "Parfum",
+        "Linalool",
+    ]
+
+
 def test_commas_between_digits_are_part_of_the_name() -> None:
     mentions = parse_ingredient_list("Aqua, 1,2-Hexanediol, 1,3-Propanediol,Glycerin")
 
